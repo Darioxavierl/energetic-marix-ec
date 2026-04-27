@@ -117,8 +117,9 @@ Se han integrado **20 centrales ecuatorianas reales**:
 | Componente | Tecnología | Versión |
 |---|---|---|
 | UI Desktop | PyQt6 | 6.7.0 |
-| Motor Web | PyQt6-WebEngine | 6.7.0 |
-| Mapas | Leaflet.js + OpenStreetMap | 1.9.4 + OSM |
+| Motor Web | PyQt6-WebEngine | 6.6.0 |
+| Mapas | Leaflet.js + OpenStreetMap | 1.7.1 + OSM |
+| CDN Mapas | cdn.jsdelivr.net | v1.7.1 |
 | Backend Python | Python | 3.11 |
 | Validación Datos | Pydantic | 2.4.2 |
 | Testing | pytest | 9.0.3 |
@@ -333,6 +334,98 @@ class SimulationEngine:
 **Solución:** Usar `Path(__file__).parent.parent` en lugar de `Path(__file__).parent`  
 **Impacto:** Script de verificación funciona 100%
 
+### Problema 4: Leaflet no renderiza en QWebEngineView
+**Síntoma:** Mapa cargaba sin errores pero pantalla en blanco (Leaflet 1.9.4 + cdnjs)  
+**Solución:** Cambiar a Leaflet 1.7.1 desde cdn.jsdelivr.net + `window.addEventListener('load')`  
+**Cambios técnicos:**
+- ✅ Leaflet 1.7.1 (más estable en QWebEngineView)
+- ✅ cdn.jsdelivr.net (mejor compatibilidad que cdnjs)
+- ✅ `window.addEventListener('load')` con delay (500ms) antes de inicializar
+- ✅ `map.invalidateSize()` después de agregar tiles
+- ✅ Conectar signal `bridge.add_marker.connect()` en JavaScript
+**Impacto:** Mapa y marcadores 100% funcional
+
+---
+
+## Soluciones Técnicas Aplicadas
+
+### 1. Integración QWebChannel ↔ Leaflet
+
+**Problema:** QWebChannel debe sincronizar Python ↔ JavaScript para agregar marcadores.
+
+**Solución implementada:**
+
+```javascript
+// En JavaScript: escuchar signal add_marker de Python
+new QWebChannel(qt.webChannelTransport, function(channel) {
+    bridge = channel.objects.bridge;
+    // Conectar signal para recibir marcadores desde Python
+    bridge.add_marker.connect(function(id, lat, lon, name, type, color) {
+        addMarker(id, lat, lon, name, type, color);
+    });
+});
+```
+
+```python
+# En Python: emitir señal de marcador
+self.bridge.add_marker.emit(
+    central["id"],
+    central["latitude"],
+    central["longitude"],
+    central["name"],
+    central["type"],
+    central["type"]
+)
+```
+
+### 2. Timing crítico: window.addEventListener('load')
+
+**Problema:** Leaflet no estaba disponible (L undefined) si se inicializaba inmediatamente.
+
+**Solución:**
+```javascript
+window.addEventListener('load', function() {
+    setTimeout(function() {
+        // Esperar 500ms después del evento load
+        initMap();
+        // Conectar QWebChannel
+        new QWebChannel(qt.webChannelTransport, ...);
+    }, 500);
+});
+```
+
+### 3. Versión Leaflet y CDN
+
+**Leaflet 1.7.1 vs 1.9.4 en QWebEngineView:**
+- 1.9.4 (cdnjs): Renderizado inconsistente, tiles no aparecen
+- 1.7.1 (cdn.jsdelivr.net): Renderizado estable, 100% compatible
+
+**Recomendación:** Mantener 1.7.1 hasta que se verifique Leaflet 2.0 en QWebEngineView.
+
+### 4. Estructura HTML optimizada
+
+```html
+<!-- IMPORTANTE: Orden de scripts -->
+<head>
+    <!-- 1. CSS Leaflet PRIMERO -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/leaflet.css" />
+    
+    <!-- 2. JS Leaflet TEMPRANO (antes del script de inicialización) -->
+    <script src="https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/leaflet.js"></script>
+    
+    <!-- 3. QWebChannel para bridge Python-JS -->
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+</head>
+<body>
+    <div id="map"></div>
+    
+    <!-- 4. Script de inicialización ÚLTIMO (usa L y QWebChannel) -->
+    <script>
+        // Aquí L está garantizado disponible
+    </script>
+</body>
+```
+
 ---
 
 ## Checklist de Completitud
@@ -441,5 +534,6 @@ Esta es la base sólida para el simulador. La arquitectura está en su lugar, lo
 ---
 
 **Responsable:** Dario Portilla  
-**Última actualización:** 2026-04-27 09:30 UTC  
+**Última actualización:** 2026-04-27 10:45 UTC  
+**Estado Final:** ✅ HITO 1 COMPLETADO Y FUNCIONAL  
 **Próximo hito:** Hito 2 - Motor de Simulación Básico

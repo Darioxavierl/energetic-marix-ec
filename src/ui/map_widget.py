@@ -1,111 +1,238 @@
 """
-Widget de mapa interactivo con Leaflet.js y QWebEngineView
+Widget de mapa interactivo con Leaflet y QWebChannel
 """
 import json
 from pathlib import Path
 from typing import List, Dict, Any
 
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtCore import QUrl
+from PyQt6.QtWebChannel import QWebChannel
+from PyQt6.QtCore import pyqtSlot, pyqtSignal, QObject, QUrl
 
-from config.settings import WEB_DIR, CENTRALES_JSON
+from config.settings import CENTRALES_JSON
+
+
+class MapBridge(QObject):
+    """Puente entre Python y JavaScript"""
+
+    # Señales de Python a JS
+    add_marker = pyqtSignal(str, float, float, str, str, str)  # id, lat, lon, name, type, color
+
+    # Señales de JS a Python
+    marker_clicked = pyqtSignal(str, float, float)
 
 
 class MapWidget(QWebEngineView):
-    """
-    Widget que embebe un mapa OpenStreetMap interactivo usando Leaflet.js
-    dentro de una ventana PyQt6
-    """
+    """Widget que embebe un mapa OpenStreetMap interactivo"""
 
     def __init__(self):
         super().__init__()
         self.centrales: List[Dict[str, Any]] = []
-        self._setup_map()
+        self._setup_ui()
 
-    def _setup_map(self) -> None:
-        """Configura y carga el mapa HTML con Leaflet"""
-        html_path = WEB_DIR / "html" / "map_container.html"
+    def _setup_ui(self):
+        """Configura la interfaz"""
+        # Cargar HTML del mapa
+        map_html = self._load_map_html()
+        self.setHtml(map_html)
 
-        if not html_path.exists():
-            raise FileNotFoundError(f"Archivo HTML no encontrado: {html_path}")
+        # Configurar QWebChannel
+        self._setup_bridge()
 
-        # Cargar HTML en el motor web
-        self.load(QUrl.fromLocalFile(str(html_path)))
+    def _setup_bridge(self):
+        """Configura el puente Python-JavaScript"""
+        self.channel = QWebChannel()
+        self.bridge = MapBridge()
 
-        # Conectar señal de carga completada
-        self.loadFinished.connect(self._on_load_finished)
+        # Registrar bridge en el canal
+        self.channel.registerObject("bridge", self.bridge)
+        self.page().setWebChannel(self.channel)
 
-    def _on_load_finished(self) -> None:
-        """Se ejecuta cuando el mapa ha cargado completamente"""
-        try:
-            # Cargar centrales desde JSON
-            self.centrales = self._load_centrales_from_json()
+    def _load_map_html(self) -> str:
+        """Carga plantilla HTML con Leaflet 1.7.1 (versión estable)"""
+        return """
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mapa Centrales Energéticas Ecuador</title>
 
-            # Agregar cada central al mapa
-            for central in self.centrales:
-                self._add_central_to_map(central)
+    <!-- Leaflet 1.7.1 (versión más estable) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/leaflet.css" />
+    <script src="https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/leaflet.js"></script>
 
-            print(f"✓ {len(self.centrales)} centrales cargadas en el mapa")
+    <!-- QWebChannel para comunicación PyQt-JS -->
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
 
-        except Exception as e:
-            print(f"❌ Error al cargar centrales: {e}")
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
-    def _load_centrales_from_json(self) -> List[Dict[str, Any]]:
+        html, body {
+            width: 100%;
+            height: 100%;
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+            background: #e3e3e3;
+        }
+
+        .central-marker {
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            border: 3px solid white;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            font-weight: bold;
+            color: white;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+
+    <script>
+        let map;
+        let bridge;
+        let markers = {};
+        let mapInitialized = false;
+
+        // Inicializar mapa
+        function initMap() {
+            if (mapInitialized) return;
+            mapInitialized = true;
+
+            try {
+                map = L.map('map', {
+                    center: [-1.8, -78.2],
+                    zoom: 7,
+                    maxZoom: 19,
+                    minZoom: 4
+                });
+
+                // Capa base OpenStreetMap
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '© OpenStreetMap contributors',
+                    maxZoom: 19,
+                    crossOrigin: true
+                }).addTo(map);
+
+                // Forzar redibujado
+                map.invalidateSize();
+
+                // Control de escala
+                L.control.scale({imperial: false}).addTo(map);
+
+                console.log('[OK] Mapa inicializado correctamente');
+            } catch(e) {
+                console.log('[ERROR] ' + e.message);
+            }
+        }
+
+        // Agregar marcador de central
+        function addMarker(id, lat, lon, name, type, color) {
+            try {
+                const colorMap = {
+                    'HYDRO': '#0066cc',
+                    'THERMAL': '#ff6600',
+                    'WIND': '#99cc00',
+                    'SOLAR': '#ffcc00'
+                };
+
+                const markerColor = colorMap[type] || color;
+
+                // Crear icono personalizado
+                const icon = L.divIcon({
+                    className: 'central-marker',
+                    html: '<div style="background-color: ' + markerColor + ';">●</div>',
+                    iconSize: [30, 30],
+                    iconAnchor: [15, 15],
+                    popupAnchor: [0, -15]
+                });
+
+                // Crear marcador
+                const marker = L.marker([lat, lon], {
+                    icon: icon,
+                    title: name
+                });
+
+                // Popup con información
+                const popupContent = '<div style="font-size: 12px; width: 200px;"><h4 style="margin: 0 0 8px 0;">' + name + '</h4><div><strong>Tipo:</strong> ' + type + '</div><div><strong>Latitud:</strong> ' + lat.toFixed(6) + '</div><div><strong>Longitud:</strong> ' + lon.toFixed(6) + '</div></div>';
+
+                marker.bindPopup(popupContent);
+                marker.on('click', function() {
+                    if (bridge) {
+                        bridge.marker_clicked(id, lat, lon);
+                    }
+                });
+
+                marker.addTo(map);
+                markers[id] = marker;
+
+                console.log('[OK] Marcador agregado: ' + name);
+            } catch(e) {
+                console.log('[ERROR addMarker] ' + e.message);
+            }
+        }
+
+        // Inicializar cuando todo esté listo
+        window.addEventListener('load', function() {
+            setTimeout(function() {
+                initMap();
+
+                // Conectar QWebChannel
+                new QWebChannel(qt.webChannelTransport, function(channel) {
+                    bridge = channel.objects.bridge;
+                    console.log('[OK] QWebChannel conectado');
+
+                    // Conectar señal add_marker del bridge
+                    bridge.add_marker.connect(function(id, lat, lon, name, type, color) {
+                        console.log('[JS] Recibido marcador: ' + name);
+                        addMarker(id, lat, lon, name, type, color);
+                    });
+                });
+            }, 500);
+        });
+
+        // Retry si load no dispara
+        setTimeout(function() {
+            if (!mapInitialized) {
+                console.log('[RETRY] Ejecutando manualmente...');
+                window.dispatchEvent(new Event('load'));
+            }
+        }, 2000);
+
+    </script>
+</body>
+</html>
         """
-        Carga centrales desde archivo JSON
-
-        Returns:
-            Lista de diccionarios con datos de centrales
-        """
-        if not CENTRALES_JSON.exists():
-            raise FileNotFoundError(f"Archivo JSON no encontrado: {CENTRALES_JSON}")
-
-        try:
-            with open(CENTRALES_JSON, "r", encoding="utf-8") as f:
-                data = json.load(f)
-
-            return data["data"]["centrales"]
-
-        except json.JSONDecodeError as e:
-            raise ValueError(f"JSON inválido en {CENTRALES_JSON}: {e}")
-
-    def _add_central_to_map(self, central: Dict[str, Any]) -> None:
-        """
-        Agrega un marcador de central al mapa mediante JavaScript
-
-        Args:
-            central: Diccionario con datos de la central
-        """
-        # Serializar central a JSON seguro
-        central_json = json.dumps(central, ensure_ascii=False)
-
-        # Ejecutar función JavaScript para agregar marcador
-        js_code = f"addMarker({central_json});"
-
-        self.page().runJavaScript(js_code)
 
     def add_centrales(self, centrales: List[Dict[str, Any]]) -> None:
-        """
-        Agrega múltiples centrales al mapa
-
-        Args:
-            centrales: Lista de diccionarios con datos de centrales
-        """
+        """Agrega múltiples centrales al mapa"""
+        self.centrales = centrales
         for central in centrales:
             self._add_central_to_map(central)
 
-    def clear_markers(self) -> None:
-        """Elimina todos los marcadores del mapa"""
-        self.page().runJavaScript("clearMarkers();")
+    def _add_central_to_map(self, central: Dict[str, Any]) -> None:
+        """Agrega una central al mapa"""
+        if not self.bridge:
+            return
 
-    def set_map_center(self, latitude: float, longitude: float, zoom: int = 7) -> None:
-        """
-        Centra el mapa en coordenadas específicas
-
-        Args:
-            latitude: Latitud en grados
-            longitude: Longitud en grados
-            zoom: Nivel de zoom (0-19)
-        """
-        js_code = f"setMapCenter({latitude}, {longitude}, {zoom});"
-        self.page().runJavaScript(js_code)
+        self.bridge.add_marker.emit(
+            central["id"],
+            central["latitude"],
+            central["longitude"],
+            central["name"],
+            central["type"],
+            central["type"]  # El tipo es el color
+        )
