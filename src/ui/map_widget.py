@@ -15,11 +15,20 @@ from config.settings import CENTRALES_JSON
 class MapBridge(QObject):
     """Puente entre Python y JavaScript"""
 
-    # Señales de Python a JS
+    # Señales (Python -> JS)
     add_marker = pyqtSignal(str, float, float, str, str, str)  # id, lat, lon, name, type, color
 
-    # Señales de JS a Python
-    marker_clicked = pyqtSignal(str, float, float)
+    # Señales eventos (JS -> Python)
+    marker_clicked_event = pyqtSignal(str, float, float)
+    map_ready_event = pyqtSignal()
+
+    @pyqtSlot(str, float, float)
+    def marker_clicked(self, id: str, lat: float, lon: float):
+        self.marker_clicked_event.emit(id, lat, lon)
+
+    @pyqtSlot()
+    def map_ready(self):
+        self.map_ready_event.emit()
 
 
 class MapWidget(QWebEngineView):
@@ -56,6 +65,7 @@ class MapWidget(QWebEngineView):
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
     <title>Mapa Centrales Energéticas Ecuador</title>
 
     <!-- Leaflet 1.7.1 (versión más estable) -->
@@ -200,6 +210,9 @@ class MapWidget(QWebEngineView):
                         console.log('[JS] Recibido marcador: ' + name);
                         addMarker(id, lat, lon, name, type, color);
                     });
+
+                    // Notificar a Python que JS ha cargado y el mapa está listo
+                    bridge.map_ready();
                 });
             }, 500);
         });
