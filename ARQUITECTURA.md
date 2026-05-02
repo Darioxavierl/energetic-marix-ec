@@ -1334,3 +1334,74 @@ logger.error("Falla motor simulación", exc_info=True)
 **Versión:** 1.0  
 **Estado:** Aprobado para implementación Fase 1
 
+---
+
+## Adenda de Implementación (2026-05-02)
+
+### Estado Arquitectónico Real
+
+El sistema evolucionó desde el diseño base y actualmente opera con una arquitectura integrada en producción local:
+
+- Simulador desktop en PyQt6 como capa de presentación y orquestación visual.
+- Microservicio externo `cenace_scraper_service` como fuente oficial de datos operativos.
+- Modo dual `AUTOMATIC`/`MANUAL` con reglas de edición y control de consistencia.
+- Persistencia local de escenarios sobre JSON versionado para reproducibilidad.
+
+### Contrato Operativo con Microservicio
+
+El simulador consume de forma periódica:
+
+- `GET /api/v1/production/latest`
+- `GET /api/v1/plants/latest`
+- `GET /api/v1/demand/hourly`
+- `GET /api/v1/health`
+
+Principio de robustez: ante fallos transitorios del microservicio, la aplicación conserva el último estado válido y reporta degradación de sincronización sin bloquear la UI.
+
+### Capas y Componentes Implementados
+
+1. Dominio
+- Modelado de `SimulationState` y `SimulationMetrics`.
+- Cálculos puros de balance, margen de reserva y clasificación de riesgo.
+
+2. Aplicación
+- `SimulationController` con transición `AUTOMATIC ↔ MANUAL`.
+- `ScenarioManager` para guardar/restaurar/duplicar/descartar escenarios.
+- Mapper de generación por planta con reconciliación por nombre y fallback por capacidad.
+
+3. Infraestructura
+- Cliente HTTP `CENACEClient` para endpoints del microservicio.
+- `EventBus` interno para desacoplar sincronización, rendering y feedback de estado.
+
+4. Presentación
+- `MainWindow` con panel de control, escenarios y edición por central en modo manual.
+- `MapWidget` con leyenda operativa, overlay por tecnología y por central, y selección bidireccional mapa-panel.
+
+### Fases Implementadas a la Fecha
+
+- Fase 0: Alineación de alcance y contrato de datos.
+- Fase 1: Núcleo de simulación (estado, KPIs, balance, riesgo).
+- Fase 2: Integración con microservicio.
+- Fase 3: Orquestación + gestor de escenarios + bus de eventos.
+- Fase 4: UI funcional completa (incluye edición manual por central y selección bidireccional).
+- Fase 5: Persistencia local de escenarios.
+- Fase 6: Pruebas, hardening e integración en vivo.
+- Fase 7: Cierre documental en curso (esta adenda y documentos operativos).
+
+### Nueva Fase Agregada
+
+#### Fase 8 — Manual de Usuario y Trazabilidad de Impacto
+
+Objetivo: documentar para usuario final qué hace cada control, cómo usar cada flujo y cómo cada acción afecta el modelo de simulación.
+
+Entregables de fase:
+- `MANUAL_USUARIO.md`: guía funcional detallada.
+- Matriz control → variable de estado → impacto en KPIs.
+- Flujos operativos recomendados para análisis reproducible.
+
+### Criterios de Aceptación del Cierre Documental
+
+- Arquitectura oficial refleja diseño real implementado.
+- Estado del checkpoint actualizado a hito funcional integrado.
+- Guía operativa y manual de usuario disponibles y consistentes con el código.
+

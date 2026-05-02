@@ -537,3 +537,40 @@ Esta es la base sólida para el simulador. La arquitectura está en su lugar, lo
 **Última actualización:** 2026-04-27 10:45 UTC  
 **Estado Final:** ✅ HITO 1 COMPLETADO Y FUNCIONAL  
 **Próximo hito:** Hito 2 - Motor de Simulación Básico
+
+---
+
+## Update 2026-05-02: Estado Integrado (Hitos 2-6)
+
+### Resumen Ejecutivo de Avance
+
+Desde el cierre de Hito 1, el proyecto avanzó a un estado funcional integrado con microservicio y flujo operativo completo de simulación.
+
+Estado actual:
+
+- ✅ Integración en vivo con microservicio CENACE.
+- ✅ Modo dual `AUTOMATIC` y `MANUAL` con transiciones estables.
+- ✅ KPIs y riesgo en tiempo real sobre estado de simulación.
+- ✅ Leyenda operativa y overlay por tipo/central en mapa.
+- ✅ Selección bidireccional mapa-panel.
+- ✅ Gestión de escenarios (guardar, restaurar, duplicar, descartar).
+- ✅ Bus de eventos interno para desacople.
+- ✅ Suite de pruebas ampliada (unitarias, integración y flujo E2E mínimo).
+
+### Indicadores Técnicos (Actualización)
+
+- Pruebas relevantes ejecutadas: 23
+- Estado de pruebas: 23 passed
+- Integración en vivo microservicio: smoke tests en verde
+- Persistencia de escenarios: JSON local en `data/scenarios`
+
+### Riesgos Residuales
+
+1. Alias semánticos entre nombres de plantas CENACE y catálogo local pueden requerir tabla explícita de equivalencias.
+2. La persistencia local actual de escenarios no incluye versionado de esquema ni export/import formal.
+3. Falta documentación de usuario final para operación funcional completa.
+
+### Próximo Cierre
+
+- Fase 7: cierre documental oficial (arquitectura, checkpoint y guía operativa).
+- Fase 8: manual de usuario con trazabilidad de impacto por control.

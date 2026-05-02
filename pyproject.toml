@@ -1,3 +1,9 @@
+[tool.pyright]
+include = ["src", "cenace_scraper_service", "cenace_scraper_service/src"]
+extraPaths = ["cenace_scraper_service", "cenace_scraper_service/src"]
+venvPath = "cenace_scraper_service"
+venv = ".venv"
+
 [tool.poetry]
 name = "energetico"
 version = "0.1.0"
@@ -40,6 +46,9 @@ disallow_untyped_defs = false
 testpaths = ["tests"]
 python_files = "test_*.py"
 addopts = "-v"
+markers = [
+	"integration: pruebas de integracion contra servicios externos",
+]
 
 [build-system]
 requires = ["poetry-core"]
