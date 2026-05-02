@@ -3,8 +3,7 @@ Tests unitarios para HTML Parser
 """
 
 import pytest
-from datetime import datetime
-from src.scraper.html_parser import CENACEHTMLParser
+from src.scraper.html_parser import CENACEHTMLParser, parse_cenace_number
 
 
 class TestCENACEHTMLParser:
@@ -16,19 +15,40 @@ class TestCENACEHTMLParser:
     
     @pytest.fixture
     def sample_html(self):
-        """HTML de ejemplo (simulado)"""
+        """HTML de ejemplo con estructura real simplificada"""
         return """
         <html>
             <body>
-                <table>
-                    <tr><td>PRODUCCIÓN ENERGÉTICA (MWh)</td></tr>
-                    <tr><td>Total</td><td>89685</td></tr>
-                    <tr><td>Hidráulica</td><td>63041</td></tr>
-                    <tr><td>Térmica</td><td>25726</td></tr>
-                    <tr><td>Renovable</td><td>665</td></tr>
-                    <tr><td>Importación</td><td>117</td></tr>
-                    <tr><td>Exportación</td><td>83</td></tr>
-                </table>
+                <div class="tab-content active">
+                    <div class="resumen-box total"><div>PRODUCCIÓN TOTAL</div><div>92 026</div></div>
+                    <div class="resumen-box hidraulica"><div>HIDRÁULICA</div><div>63 022</div></div>
+                    <div class="resumen-box otra"><div>TÉRMICA</div><div>28 054</div></div>
+                    <div class="resumen-box noconvencional"><div>R. NO CONVENCIONAL</div><div>668</div></div>
+                    <div class="resumen-box importacion"><div>IMPORTACIÓN</div><div>72</div></div>
+                    <div class="resumen-box exportacion"><div>EXPORTACIÓN</div><div>94</div></div>
+                    <script type="text/javascript">
+                        Plotly.newPlot(
+                            "graph1",
+                            [{"type":"bar","name":"Coca Codo","y":[21372]}],
+                            {}
+                        )
+                    </script>
+                    <script type="text/javascript">
+                        Plotly.newPlot(
+                            "graph2",
+                            [
+                                {"name":"Hidráulica","x":["00:00","00:30"],"y":[1000,1100],"stackgroup":"one"},
+                                {"name":"Térmica","x":["00:00","00:30"],"y":[500,550],"stackgroup":"one"},
+                                {"name":"Renovable","x":["00:00","00:30"],"y":[100,110],"stackgroup":"one"},
+                                {"name":"Importación","x":["00:00","00:30"],"y":[10,10],"stackgroup":"one"},
+                                {"name":"Exportación","x":["00:00","00:30"],"y":[5,6],"stackgroup":"one"},
+                                {"name":"PRODUCCIÓN TOTAL","x":["00:00","00:30"],"y":[1610,1770]},
+                                {"name":"DEMANDA NACIONAL","x":["00:00","00:30"],"y":[1600,1760]}
+                            ],
+                            {}
+                        )
+                    </script>
+                </div>
             </body>
         </html>
         """
@@ -39,28 +59,13 @@ class TestCENACEHTMLParser:
         assert hasattr(parser, 'parse_production_summary')
         assert hasattr(parser, 'validate_data')
     
-    def test_extract_number(self, parser):
-        """Tests para extracción de números"""
-        
-        # Test números simples
-        assert parser._extract_number("100") == 100.0
-        assert parser._extract_number("100.5") == 100.5
-        
-        # Test números con comas (formato ES)
-        assert parser._extract_number("1.000") == 1000.0
-        assert parser._extract_number("63.041") == 63041.0
-        
-        # Test números con comas como decimal
-        assert parser._extract_number("3,5") == 3.5
-        
-        # Test strings complejos
-        assert parser._extract_number("Total: 89,685 MWh") == 89685.0
-        assert parser._extract_number("Producción 2.400 MW") == 2400.0
-        
-        # Test None/invalid
-        assert parser._extract_number(None) is None
-        assert parser._extract_number("") is None
-        assert parser._extract_number("No tiene números") is None
+    def test_parse_cenace_number(self):
+        """Tests para parseo de números formato CENACE"""
+        assert parse_cenace_number("92 026") == 92026.0
+        assert parse_cenace_number("0.727") == 0.727
+        assert parse_cenace_number("3,5") == 3.5
+        assert parse_cenace_number("") is None
+        assert parse_cenace_number("sin numero") is None
     
     def test_infer_plant_type(self, parser):
         """Tests para inferencia de tipo de central"""
@@ -91,6 +96,22 @@ class TestCENACEHTMLParser:
         assert 'thermal_mwh' in data
         assert 'renewable_mwh' in data
         assert 'timestamp' in data
+
+    def test_parse_plant_details(self, parser, sample_html):
+        """Tests para extracción de plantas desde Plotly"""
+        plants = parser.parse_plant_details(sample_html)
+        assert len(plants) == 1
+        assert plants[0]["plant_name"] == "Coca Codo"
+        assert plants[0]["plant_id"] == "COCA_CODO"
+
+    def test_parse_hourly_curve(self, parser, sample_html):
+        """Tests para curva horaria con resolución de 30 minutos"""
+        curve = parser.parse_hourly_curve(sample_html)
+        assert len(curve) == 2
+        assert curve[0]["hour"] == 0
+        assert curve[0]["minute"] == 0
+        assert curve[1]["minute"] == 30
+        assert curve[0]["demand_mw"] == 1600
     
     def test_parse_production_summary_empty(self, parser):
         """Tests con HTML vacío"""

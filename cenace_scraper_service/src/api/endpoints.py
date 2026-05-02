@@ -20,6 +20,7 @@ from src.api.schemas import (
     HealthResponse,
     ScrapeLogResponse
 )
+from src.utils.config import SCRAPER_INTERVAL_MINUTES
 from src.utils.logger import logger
 
 router = APIRouter(prefix="/api/v1", tags=["CENACE Data"])
@@ -84,9 +85,7 @@ async def get_production_history(
 async def get_latest_plants(db: Session = Depends(get_db)):
     """Obtiene generación más reciente por central"""
     from src.database.models import PlantGeneration
-    from sqlalchemy import func, desc
-    
-    repo = PlantRepository(db)
+    from sqlalchemy import func
     
     # Obtener timestamp más reciente
     latest_timestamp = db.query(func.max(PlantGeneration.timestamp)).scalar()
@@ -159,11 +158,14 @@ async def get_hourly_demand(
         HourlyCurveResponse(
             date=c.date,
             hour=c.hour,
+            minute=c.minute,
             demand_mw=c.demand_mw,
             total_production_mw=c.total_production_mw,
             hydro_mw=c.hydro_mw,
             thermal_mw=c.thermal_mw,
             renewable_mw=c.renewable_mw,
+            import_mw=c.import_mw,
+            export_mw=c.export_mw,
             balance_mw=c.balance_mw,
             reserve_margin=c.reserve_margin,
             risk_level=c.risk_level
@@ -176,32 +178,33 @@ async def get_hourly_demand(
 
 @router.get("/health", response_model=HealthResponse)
 async def get_health(db: Session = Depends(get_db)):
-    """Estado de salud del servicio"""
+    """Estado de salud del servicio con conteo real"""
     try:
-        prod_repo = ProductionRepository(db)
-        last_snapshot = prod_repo.get_latest()
+        from src.database.models import ProductionSnapshot
         
         scrape_repo = ScrapeLogRepository(db)
         success_rate = scrape_repo.get_success_rate(days=7)
         last_logs = scrape_repo.get_last_n_logs(1)
         
-        last_scrape = None
-        next_scrape = None
-        if last_logs:
-            last_scrape = last_logs[0].timestamp
-            # Asumir que scraping ocurre cada 15 minutos
-            next_scrape = last_scrape + timedelta(minutes=15)
+        # Conteo real de datos
+        total_records = db.query(ProductionSnapshot).count()
         
+        last_scrape = last_logs[0].timestamp if last_logs else None
+        next_scrape = (
+            last_scrape + timedelta(minutes=SCRAPER_INTERVAL_MINUTES)
+            if last_scrape else None
+        )
+
         return HealthResponse(
-            status="healthy",
+            status="healthy" if success_rate >= 50 else "degraded",
             last_scrape=last_scrape,
             next_scrape=next_scrape,
-            records_stored=0,  # Simplificado para este endpoint
+            records_stored=total_records,
             success_rate=success_rate
         )
     except Exception as e:
-        logger.error(f"Health check error: {e}")
-        raise HTTPException(status_code=500, detail="Health check failed")
+        logger.error(f"Health check fallido: {e}")
+        raise HTTPException(status_code=500, detail="Error interno en health check")
 
 
 @router.get("/logs", response_model=List[ScrapeLogResponse])

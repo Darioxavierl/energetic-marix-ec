@@ -136,6 +136,7 @@ class TestHourlyCurveRepository:
             data_list.append({
                 'date': datetime.now().date(),
                 'hour': hour,
+                'minute': 0,
                 'demand_mw': 4000 + hour * 50,
                 'total_production_mw': 4100 + hour * 40,
                 'hydro_mw': 2000,

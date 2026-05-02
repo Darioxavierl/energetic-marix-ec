@@ -38,3 +38,9 @@ API_RELOAD = os.getenv("API_RELOAD", "True").lower() == "true"
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+# Configuración de Playwright
+PLAYWRIGHT_HEADLESS = os.getenv("PLAYWRIGHT_HEADLESS", "True").lower() == "true"
+PLAYWRIGHT_TIMEOUT = int(os.getenv("PLAYWRIGHT_TIMEOUT", "30000"))  # ms
+PLAYWRIGHT_WAIT_SELECTOR = os.getenv("PLAYWRIGHT_WAIT_SELECTOR", ".resumen-box.total")
+PLAYWRIGHT_WAIT_UNTIL = os.getenv("PLAYWRIGHT_WAIT_UNTIL", "networkidle")

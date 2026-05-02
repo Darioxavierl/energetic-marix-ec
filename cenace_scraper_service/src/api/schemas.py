@@ -2,7 +2,7 @@
 Schemas Pydantic para validación de datos
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
@@ -37,8 +37,9 @@ class PlantGenerationResponse(BaseModel):
 
 class HourlyCurveResponse(BaseModel):
     """Curva horaria"""
-    date: str
+    date: date
     hour: int
+    minute: int = 0
     demand_mw: float
     total_production_mw: float
     hydro_mw: float
@@ -48,6 +49,7 @@ class HourlyCurveResponse(BaseModel):
     export_mw: float
     balance_mw: Optional[float] = None
     reserve_margin: Optional[float] = None
+    risk_level: Optional[str] = None
 
 class HealthResponse(BaseModel):
     """Estado de salud del servicio"""

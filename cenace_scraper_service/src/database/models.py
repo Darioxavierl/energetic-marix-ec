@@ -78,6 +78,7 @@ class HourlyCurve(Base):
     id = Column(Integer, primary_key=True)
     date = Column(Date, nullable=False, index=True)
     hour = Column(Integer, nullable=False)  # 0-23
+    minute = Column(Integer, nullable=False, default=0)  # 0-59 (CENACE usa 0 y 30)
     
     # Demanda (MW)
     demand_mw = Column(Float)
@@ -100,7 +101,7 @@ class HourlyCurve(Base):
     
     def __repr__(self):
         return (
-            f"<HourlyCurve(date={self.date}, hour={self.hour}, "
+            f"<HourlyCurve(date={self.date}, hour={self.hour}:{self.minute:02d}, "
             f"demand={self.demand_mw:.0f}MW, balance={self.balance_mw:.0f}MW)>"
         )
 
