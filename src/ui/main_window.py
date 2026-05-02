@@ -1,6 +1,7 @@
 """
 Ventana principal de la aplicación PyQt6
 """
+import copy
 import json
 from PyQt6.QtWidgets import (
     QMainWindow,
@@ -16,6 +17,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QFormLayout,
+    QSlider,
 )
 from PyQt6.QtCore import Qt, QTimer
 
@@ -30,8 +32,18 @@ from src.domain.simulation.generation_allocator import (
     calculate_utilization_by_type,
     split_renewable_generation,
 )
+from src.domain.simulation.generation_aggregator import (
+    aggregate_generation_by_plant,
+    aggregate_generation_by_type,
+)
 from src.infrastructure.api.cenace_client import CENACEClient
 from src.infrastructure.events.event_bus import EventBus
+from src.ui.charts_data_mapper import (
+    append_history_point,
+    build_charts_payload,
+    build_history_point_with_origin,
+)
+from src.ui.charts_widget import ChartsWidget
 from src.ui.map_widget import MapWidget
 from config.settings import (
     APP_TITLE,
@@ -42,6 +54,11 @@ from config.settings import (
     MICROSERVICE_TIMEOUT_SECONDS,
     MICROSERVICE_SYNC_INTERVAL_MS,
     SCENARIOS_DIR,
+    HYDRO_DEFAULT_RESERVOIR_LEVEL_PCT,
+    GLOBAL_DROUGHT_DEFAULT,
+    GLOBAL_DROUGHT_MIN,
+    GLOBAL_DROUGHT_MAX,
+    CHART_HISTORY_MAX_POINTS,
 )
 
 
@@ -51,10 +68,13 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.centrales = []
+        self.base_centrales: list[dict] = []
         self.central_lookup: dict[str, dict] = {}
         self.selected_central_id: str | None = None
+        self.global_drought_pct: float = GLOBAL_DROUGHT_DEFAULT
         self.installed_by_type_mw = {"HYDRO": 0.0, "THERMAL": 0.0, "WIND": 0.0, "SOLAR": 0.0}
         self.installed_by_id_mw: dict[str, float] = {}
+        self.chart_history: list[dict] = []
         self._build_services()
         self._setup_ui()
         self._setup_sync_timer()
@@ -89,9 +109,18 @@ class MainWindow(QMainWindow):
         control_panel = self._build_control_panel()
         splitter.addWidget(control_panel)
 
-        # Crear y agregar widget del mapa
+        # Crear layout derecho con mapa + panel de graficas
+        right_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.map_widget = MapWidget()
-        splitter.addWidget(self.map_widget)
+        self.charts_widget = ChartsWidget()
+        self.charts_widget.setMinimumWidth(360)
+        self.charts_widget.setMaximumWidth(540)
+        right_splitter.addWidget(self.map_widget)
+        right_splitter.addWidget(self.charts_widget)
+        right_splitter.setStretchFactor(0, 1)
+        right_splitter.setStretchFactor(1, 0)
+        right_splitter.setSizes([max(WINDOW_WIDTH - 760, 600), 420])
+        splitter.addWidget(right_splitter)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([320, max(WINDOW_WIDTH - 320, 600)])
@@ -158,7 +187,28 @@ class MainWindow(QMainWindow):
         self.central_status_combo.addItems(["ONLINE", "OFFLINE", "MAINTENANCE"])
         self.central_status_combo.setEnabled(False)
         central_form.addRow("Estado", self.central_status_combo)
+
+        self.hydro_reservoir_spin = QDoubleSpinBox()
+        self.hydro_reservoir_spin.setRange(0.0, 100.0)
+        self.hydro_reservoir_spin.setSingleStep(5.0)
+        self.hydro_reservoir_spin.setSuffix(" %")
+        self.hydro_reservoir_spin.setEnabled(False)
+        central_form.addRow("Embalse", self.hydro_reservoir_spin)
+
         layout.addLayout(central_form)
+
+        global_drought_row = QHBoxLayout()
+        self.global_drought_label = QLabel("Sequia global: 0%")
+        global_drought_row.addWidget(self.global_drought_label)
+        layout.addLayout(global_drought_row)
+
+        self.global_drought_slider = QSlider(Qt.Orientation.Horizontal)
+        self.global_drought_slider.setMinimum(int(GLOBAL_DROUGHT_MIN))
+        self.global_drought_slider.setMaximum(int(GLOBAL_DROUGHT_MAX))
+        self.global_drought_slider.setValue(int(GLOBAL_DROUGHT_DEFAULT))
+        self.global_drought_slider.setEnabled(False)
+        self.global_drought_slider.valueChanged.connect(self._on_global_drought_changed)
+        layout.addWidget(self.global_drought_slider)
 
         self.apply_central_button = QPushButton("Aplicar central")
         self.apply_central_button.setEnabled(False)
@@ -204,6 +254,11 @@ class MainWindow(QMainWindow):
         self.mode_button = QPushButton("Cambiar a MANUAL")
         self.mode_button.clicked.connect(self._toggle_mode)
         button_row.addWidget(self.mode_button)
+
+        self.reset_manual_button = QPushButton("Reset MANUAL")
+        self.reset_manual_button.setEnabled(False)
+        self.reset_manual_button.clicked.connect(self._reset_manual_baseline)
+        button_row.addWidget(self.reset_manual_button)
         layout.addLayout(button_row)
 
         self.delta_input = QDoubleSpinBox()
@@ -243,9 +298,11 @@ class MainWindow(QMainWindow):
         try:
             with open(CENTRALES_JSON, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                centrales = data.get("data", {}).get("centrales", [])
+                centrales = self._normalize_hydro_contract(data.get("data", {}).get("centrales", []))
                 self.centrales = centrales
+                self.base_centrales = copy.deepcopy(centrales)
                 self.central_lookup = {str(c.get("id")): c for c in centrales}
+                self.chart_history.clear()
                 self._rebuild_installed_by_type()
                 self._refresh_central_selector()
                 self.map_widget.add_centrales(centrales)
@@ -272,7 +329,36 @@ class MainWindow(QMainWindow):
             else DataSourceMode.AUTOMATIC
         )
         state = self.simulation_controller.switch_mode(new_mode)
+        if new_mode == DataSourceMode.MANUAL and self.centrales:
+            self.centrales = copy.deepcopy(self.base_centrales)
+            self.central_lookup = {str(c.get("id")): c for c in self.centrales}
+            self._rebuild_installed_by_type()
+            self._refresh_central_selector()
+            self.global_drought_pct = GLOBAL_DROUGHT_DEFAULT
+            state = self.simulation_controller.apply_manual_central_catalog(
+                self.centrales,
+                global_drought_factor=(self.global_drought_pct / 100.0),
+            )
+        elif new_mode == DataSourceMode.AUTOMATIC:
+            self.global_drought_pct = GLOBAL_DROUGHT_DEFAULT
         self.event_bus.publish("state_updated", {"state": state, "origin": "mode_switch"})
+
+    def _reset_manual_baseline(self) -> None:
+        """Reset current manual catalog and global drought to deterministic baseline."""
+
+        if self.simulation_controller.state.mode != DataSourceMode.MANUAL:
+            return
+
+        self.centrales = copy.deepcopy(self.base_centrales)
+        self.central_lookup = {str(c.get("id")): c for c in self.centrales}
+        self._rebuild_installed_by_type()
+        self._refresh_central_selector()
+        self.global_drought_pct = GLOBAL_DROUGHT_DEFAULT
+        state = self.simulation_controller.apply_manual_central_catalog(
+            self.centrales,
+            global_drought_factor=(self.global_drought_pct / 100.0),
+        )
+        self.event_bus.publish("state_updated", {"state": state, "origin": "manual_reset"})
 
     def _apply_manual_adjustment(self) -> None:
         """Apply demand percentage delta while in manual mode."""
@@ -284,15 +370,33 @@ class MainWindow(QMainWindow):
         """Handle state updates emitted through internal event bus."""
 
         state = payload.get("state", self.simulation_controller.state)
+        origin = str(payload.get("origin", "state_updated"))
         source_ts = state.source_timestamp.isoformat(sep=" ", timespec="seconds") if state.source_timestamp else "N/A"
         self.status_label.setText(f"Estado: Datos activos. Fuente: {source_ts}")
+        append_history_point(
+            self.chart_history,
+            build_history_point_with_origin(state, origin),
+            max_points=CHART_HISTORY_MAX_POINTS,
+        )
         self._render_state(state)
+        self._render_charts(state)
 
     def _on_sync_error(self, payload: dict) -> None:
         """Handle sync errors emitted through internal event bus."""
 
         error = payload.get("error", "Error desconocido")
         self.status_label.setText(f"Estado: Error de conexion. {error}")
+
+    def _render_charts(self, state: SimulationState) -> None:
+        """Render charts panel from current state and available timelines."""
+
+        hourly_curve = self.simulation_controller.get_latest_hourly_curve_snapshot()
+        payload = build_charts_payload(
+            state=state,
+            history=self.chart_history,
+            hourly_curve=hourly_curve,
+        )
+        self.charts_widget.update_dashboard(payload)
 
     def _refresh_scenario_selector(self) -> None:
         """Reload scenario names from persistent storage into combo box."""
@@ -313,7 +417,7 @@ class MainWindow(QMainWindow):
             return
 
         state = self.simulation_controller.get_state_snapshot()
-        target = self.scenario_manager.save(raw_name, state)
+        target = self.scenario_manager.save(raw_name, state, centrales=self.centrales)
         self._refresh_scenario_selector()
         self.scenario_selector.setCurrentText(target.stem)
         self.status_label.setText(f"Estado: Escenario guardado ({target.stem}).")
@@ -327,8 +431,22 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            loaded = self.scenario_manager.load(name)
+            bundle = self.scenario_manager.load_bundle(name)
+            loaded = bundle["state"]
+            loaded_centrales = bundle.get("centrales")
+
+            if loaded_centrales is not None:
+                self.centrales = self._normalize_hydro_contract(loaded_centrales)
+                self.central_lookup = {str(c.get("id")): c for c in self.centrales}
+                self._rebuild_installed_by_type()
+                self._refresh_central_selector()
+
             state = self.simulation_controller.set_state(loaded)
+            if state.mode == DataSourceMode.MANUAL:
+                state = self.simulation_controller.apply_manual_central_catalog(
+                    self.centrales,
+                    global_drought_factor=state.global_drought_factor,
+                )
             self.event_bus.publish("state_updated", {"state": state, "origin": "scenario_load"})
             self.status_label.setText(f"Estado: Escenario restaurado ({name}).")
         except FileNotFoundError as exc:
@@ -369,7 +487,16 @@ class MainWindow(QMainWindow):
         self.apply_manual_button.setEnabled(is_manual)
         self.central_available_spin.setEnabled(is_manual)
         self.central_status_combo.setEnabled(is_manual)
+        self.global_drought_slider.setEnabled(is_manual)
+        self.reset_manual_button.setEnabled(is_manual)
+        self.hydro_reservoir_spin.setEnabled(is_manual and self.central_type_label.text().upper() == "HYDRO")
         self.apply_central_button.setEnabled(is_manual and self.selected_central_id is not None)
+        self.global_drought_slider.blockSignals(True)
+        self.global_drought_slider.setValue(int(round(state.global_drought_factor * 100.0)))
+        self.global_drought_slider.blockSignals(False)
+        self.global_drought_label.setText(
+            f"Sequia global: {int(round(state.global_drought_factor * 100.0))}%"
+        )
         self.metrics_label.setText(self._format_metrics(state))
         self._update_map_overlay(state)
 
@@ -397,23 +524,41 @@ class MainWindow(QMainWindow):
             wind_capacity_mw=self.installed_by_type_mw.get("WIND", 0.0),
             solar_capacity_mw=self.installed_by_type_mw.get("SOLAR", 0.0),
         )
-        generation_by_type_mw = {
-            "HYDRO": max(0.0, state.hydro_mw),
-            "THERMAL": max(0.0, state.thermal_mw),
-            "WIND": renewable_split.get("WIND", 0.0),
-            "SOLAR": renewable_split.get("SOLAR", 0.0),
-        }
-        utilization_by_type = calculate_utilization_by_type(
-            generation_by_type_mw=generation_by_type_mw,
-            installed_by_type_mw=self.installed_by_type_mw,
-        )
+        if state.mode == DataSourceMode.MANUAL:
+            generation_by_type_mw = aggregate_generation_by_type(
+                self.centrales,
+                global_drought_factor=state.global_drought_factor,
+            )
+            generation_by_plant_id_mw = aggregate_generation_by_plant(
+                self.centrales,
+                global_drought_factor=state.global_drought_factor,
+            )
+            utilization_by_type = calculate_utilization_by_type(
+                generation_by_type_mw=generation_by_type_mw,
+                installed_by_type_mw=self.installed_by_type_mw,
+            )
+            utilization_by_plant_id = calculate_plant_utilization(
+                generation_by_id_mw=generation_by_plant_id_mw,
+                installed_by_id_mw=self.installed_by_id_mw,
+            )
+        else:
+            generation_by_type_mw = {
+                "HYDRO": max(0.0, state.hydro_mw),
+                "THERMAL": max(0.0, state.thermal_mw),
+                "WIND": renewable_split.get("WIND", 0.0),
+                "SOLAR": renewable_split.get("SOLAR", 0.0),
+            }
+            utilization_by_type = calculate_utilization_by_type(
+                generation_by_type_mw=generation_by_type_mw,
+                installed_by_type_mw=self.installed_by_type_mw,
+            )
 
-        live_plants = self.simulation_controller.get_latest_plants_snapshot()
-        generation_by_plant_id_mw = map_live_generation_to_centrales(self.centrales, live_plants)
-        utilization_by_plant_id = calculate_plant_utilization(
-            generation_by_id_mw=generation_by_plant_id_mw,
-            installed_by_id_mw=self.installed_by_id_mw,
-        )
+            live_plants = self.simulation_controller.get_latest_plants_snapshot()
+            generation_by_plant_id_mw = map_live_generation_to_centrales(self.centrales, live_plants)
+            utilization_by_plant_id = calculate_plant_utilization(
+                generation_by_id_mw=generation_by_plant_id_mw,
+                installed_by_id_mw=self.installed_by_id_mw,
+            )
 
         self.map_widget.update_generation_overlay(
             generation_by_type_mw,
@@ -484,6 +629,28 @@ class MainWindow(QMainWindow):
         status_index = self.central_status_combo.findText(status)
         self.central_status_combo.setCurrentIndex(status_index if status_index >= 0 else 0)
 
+        is_hydro = str(central.get("type", "")).upper() == "HYDRO"
+        reservoir = float(central.get("reservoir_level_pct", HYDRO_DEFAULT_RESERVOIR_LEVEL_PCT) or 0.0)
+
+        self.hydro_reservoir_spin.setValue(reservoir)
+
+        is_manual = self.simulation_controller.state.mode == DataSourceMode.MANUAL
+        self.hydro_reservoir_spin.setEnabled(is_manual and is_hydro)
+
+    def _on_global_drought_changed(self, value: int) -> None:
+        """Apply global drought changes in manual mode and refresh KPIs immediately."""
+
+        self.global_drought_pct = float(value)
+        self.global_drought_label.setText(f"Sequia global: {value}%")
+        if self.simulation_controller.state.mode != DataSourceMode.MANUAL:
+            return
+
+        state = self.simulation_controller.apply_manual_central_catalog(
+            self.centrales,
+            global_drought_factor=(self.global_drought_pct / 100.0),
+        )
+        self.event_bus.publish("state_updated", {"state": state, "origin": "global_drought"})
+
     def _apply_central_edit(self) -> None:
         """Apply selected central edits while in manual mode."""
 
@@ -498,9 +665,33 @@ class MainWindow(QMainWindow):
 
         central["available_capacity_mw"] = float(self.central_available_spin.value())
         central["status"] = str(self.central_status_combo.currentText())
+        if str(central.get("type", "")).upper() == "HYDRO":
+            central["reservoir_level_pct"] = float(self.hydro_reservoir_spin.value())
         self._rebuild_installed_by_type()
-        self._update_map_overlay(self.simulation_controller.state)
+
+        state = self.simulation_controller.apply_manual_central_catalog(
+            self.centrales,
+            global_drought_factor=(self.global_drought_pct / 100.0),
+        )
+        self.event_bus.publish("state_updated", {"state": state, "origin": "central_edit"})
         self.status_label.setText(f"Estado: Central actualizada ({self.selected_central_id}).")
+
+    @staticmethod
+    def _normalize_hydro_contract(centrales: list[dict]) -> list[dict]:
+        """Normalize hydro fields to current UI contract (reservoir only)."""
+
+        normalized = copy.deepcopy(centrales)
+        for central in normalized:
+            if str(central.get("type", "")).upper() != "HYDRO":
+                continue
+            reservoir = float(
+                central.get("reservoir_level_pct", HYDRO_DEFAULT_RESERVOIR_LEVEL_PCT)
+                or HYDRO_DEFAULT_RESERVOIR_LEVEL_PCT
+            )
+            central["reservoir_level_pct"] = max(0.0, min(100.0, reservoir))
+            central.pop("inflow_index", None)
+            central.pop("drought_factor", None)
+        return normalized
 
     @staticmethod
     def _format_metrics(state: SimulationState) -> str:

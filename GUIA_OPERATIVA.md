@@ -60,6 +60,27 @@ Push-Location "g:/My Drive/Universidad/10. DECIMO/Regulacion/Energetico/energeti
 - Guardar escenario antes y despues de cambios significativos.
 - Si hay error de sincronizacion, continuar en manual con ultimo estado valido.
 
+## Flujo Reproducible de Sequia
+
+1. Sincronizar en `AUTOMATIC` y guardar escenario base (ejemplo: `base_hoy`).
+2. Cambiar a `MANUAL`.
+3. Seleccionar una central `HYDRO` y ajustar `Embalse`.
+4. Ajustar `Sequia global` para escalar el estres hidrico del sistema.
+5. Confirmar en panel KPI el impacto en `Hidro MW`, `Oferta total`, `Reserva %` y `Riesgo`.
+6. Si el escenario manual queda degradado por pruebas previas, usar `Reset MANUAL` para reiniciar baseline.
+7. Guardar escenario variante (ejemplo: `sequia_media` o `sequia_severa`).
+8. Restaurar el escenario base para comparar nuevamente.
+
+Resultado esperado: al bajar embalse o subir sequia global, la generacion hidro debe caer de forma monotona.
+
+## Flujo Recomendado de Analisis Visual
+
+1. Verificar en panel de graficas el estado instantaneo (Demanda, Oferta, Balance).
+2. Revisar el mix de generacion por tipo para confirmar distribucion de fuentes.
+3. Usar la grafica de tendencia temporal con ventana `Ult 15` o `Ult 30` para identificar cambios recientes.
+4. Correlacionar cambios de curvas con la lista de eventos (`manual_adjust`, `central_edit`, `mode_switch`, `manual_reset`).
+5. Para analisis historico de sesion, volver a ventana `Sesion`.
+
 ## Troubleshooting Basico
 
 1. Error de conexion al microservicio
@@ -70,6 +91,14 @@ Push-Location "g:/My Drive/Universidad/10. DECIMO/Regulacion/Energetico/energeti
 - Verificar carpeta `data/scenarios`.
 - Guardar un escenario nuevo desde la UI para inicializar.
 
-3. Datos no cambian en automatico
+3. Restaurar escenario no refleja cambios hidricos esperados
+- Verificar que el escenario haya sido guardado despues de editar controles hidro.
+- Confirmar que la restauracion se realizo en modo `MANUAL` para recomputo de KPI por catalogo local.
+
+4. Cambio AUTOMATIC -> MANUAL cae en riesgo alto inmediatamente
+- Usar `Reset MANUAL` para reconstruir baseline manual limpio.
+- Verificar que `Sequia global` este en 0% antes de iniciar nuevo what-if.
+
+5. Datos no cambian en automatico
 - Confirmar scheduler activo en microservicio.
 - Ejecutar boton `Sincronizar ahora` en el simulador.

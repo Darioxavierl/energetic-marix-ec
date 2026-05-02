@@ -26,11 +26,13 @@ class SimulationMetrics:
 class SimulationState:
     """Current working state shown in the simulator."""
 
+    schema_version: int = 2
     mode: DataSourceMode = DataSourceMode.AUTOMATIC
     demand_mw: float = 0.0
     hydro_mw: float = 0.0
     thermal_mw: float = 0.0
     renewable_mw: float = 0.0
+    global_drought_factor: float = 0.0
     import_mw: float = 0.0
     export_mw: float = 0.0
     source_timestamp: datetime | None = None
@@ -41,11 +43,13 @@ class SimulationState:
         """Serialize state into a plain dictionary for debugging/logging."""
 
         return {
+            "schema_version": self.schema_version,
             "mode": self.mode.value,
             "demand_mw": self.demand_mw,
             "hydro_mw": self.hydro_mw,
             "thermal_mw": self.thermal_mw,
             "renewable_mw": self.renewable_mw,
+            "global_drought_factor": self.global_drought_factor,
             "import_mw": self.import_mw,
             "export_mw": self.export_mw,
             "source_timestamp": self.source_timestamp.isoformat() if self.source_timestamp else None,
@@ -62,6 +66,7 @@ class SimulationState:
     def from_dict(cls, payload: dict) -> "SimulationState":
         """Build simulation state from persisted dictionary payload."""
 
+        schema_version = int(payload.get("schema_version", 1) or 1)
         mode_raw = payload.get("mode", DataSourceMode.AUTOMATIC.value)
         mode = DataSourceMode(mode_raw)
 
@@ -80,11 +85,13 @@ class SimulationState:
         )
 
         return cls(
+            schema_version=schema_version,
             mode=mode,
             demand_mw=float(payload.get("demand_mw", 0.0)),
             hydro_mw=float(payload.get("hydro_mw", 0.0)),
             thermal_mw=float(payload.get("thermal_mw", 0.0)),
             renewable_mw=float(payload.get("renewable_mw", 0.0)),
+            global_drought_factor=float(payload.get("global_drought_factor", 0.0)),
             import_mw=float(payload.get("import_mw", 0.0)),
             export_mw=float(payload.get("export_mw", 0.0)),
             source_timestamp=source_timestamp,

@@ -7,6 +7,7 @@ from datetime import datetime
 
 from src.domain.models.simulation_state import DataSourceMode, SimulationMetrics, SimulationState
 from src.domain.simulation.balance_calculator import BalanceCalculator
+from src.domain.simulation.generation_aggregator import aggregate_generation_by_type
 from src.domain.simulation.risk_assessor import RiskAssessor
 from src.infrastructure.api.cenace_client import CENACEClient, CENACEClientError
 
@@ -18,6 +19,7 @@ class SimulationController:
         self.cenace_client = cenace_client
         self.state = SimulationState()
         self.latest_plants: list[dict] = []
+        self.latest_hourly_curve: list[dict] = []
 
     def sync_from_microservice(self) -> SimulationState:
         """Load latest values from scraper service while in automatic mode."""
@@ -27,6 +29,7 @@ class SimulationController:
 
         production = self.cenace_client.get_latest_production()
         curve = self.cenace_client.get_hourly_demand()
+        self.latest_hourly_curve = list(curve)
         get_latest_plants = getattr(self.cenace_client, "get_latest_plants", None)
         if callable(get_latest_plants):
             try:
@@ -74,6 +77,30 @@ class SimulationController:
         self.state.metrics = self._calculate_metrics()
         return self.state
 
+    def apply_manual_central_catalog(
+        self,
+        centrales: list[dict],
+        global_drought_factor: float | None = None,
+    ) -> SimulationState:
+        """Recalculate generation split and KPIs from edited central catalog in manual mode."""
+
+        if self.state.mode != DataSourceMode.MANUAL:
+            return self.state
+
+        if global_drought_factor is not None:
+            self.state.global_drought_factor = max(0.0, min(1.0, float(global_drought_factor)))
+
+        generation_by_type = aggregate_generation_by_type(
+            centrales=centrales,
+            global_drought_factor=self.state.global_drought_factor,
+        )
+        self.state.hydro_mw = generation_by_type.get("HYDRO", 0.0)
+        self.state.thermal_mw = generation_by_type.get("THERMAL", 0.0)
+        self.state.renewable_mw = generation_by_type.get("WIND", 0.0) + generation_by_type.get("SOLAR", 0.0)
+        self.state.last_manual_edit = datetime.now()
+        self.state.metrics = self._calculate_metrics()
+        return self.state
+
     def _calculate_metrics(self) -> SimulationMetrics:
         """Calculate core KPIs from current state values."""
 
@@ -106,6 +133,11 @@ class SimulationController:
         """Return last successful plants payload from microservice."""
 
         return list(self.latest_plants)
+
+    def get_latest_hourly_curve_snapshot(self) -> list[dict]:
+        """Return last successful hourly demand curve payload from microservice."""
+
+        return list(self.latest_hourly_curve)
 
     def set_state(self, state: SimulationState) -> SimulationState:
         """Replace current simulation state from an external snapshot."""
