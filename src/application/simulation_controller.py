@@ -37,7 +37,7 @@ class SimulationController:
             except CENACEClientError:
                 # Plants endpoint can fail independently; keep sync alive with last good snapshot
                 pass
-        latest_point = curve[-1] if curve else {}
+        latest_point = self._select_latest_effective_point(curve)
 
         self.state.hydro_mw = float(latest_point.get("hydro_mw", 0.0))
         self.state.thermal_mw = float(latest_point.get("thermal_mw", 0.0))
@@ -50,9 +50,36 @@ class SimulationController:
             # Fallback to production total when no demand curve is available yet
             self.state.demand_mw = float(production.get("total_mwh", 0.0))
 
+        # When hourly curve ends with placeholders/zeros, recover generation from production snapshot.
+        if self.state.hydro_mw <= 0.0:
+            self.state.hydro_mw = float(production.get("hydro_mwh", 0.0))
+        if self.state.thermal_mw <= 0.0:
+            self.state.thermal_mw = float(production.get("thermal_mwh", 0.0))
+        if self.state.renewable_mw <= 0.0:
+            self.state.renewable_mw = float(production.get("renewable_mwh", 0.0))
+        if self.state.import_mw <= 0.0:
+            self.state.import_mw = float(production.get("import_mwh", 0.0))
+        if self.state.export_mw <= 0.0:
+            self.state.export_mw = float(production.get("export_mwh", 0.0))
+
         self.state.source_timestamp = CENACEClient.parse_iso_datetime(production.get("timestamp"))
         self.state.metrics = self._calculate_metrics()
         return self.state
+
+    @staticmethod
+    def _select_latest_effective_point(curve: list[dict]) -> dict:
+        """Return the latest non-empty hourly point, or last raw point as fallback."""
+
+        if not curve:
+            return {}
+
+        for point in reversed(curve):
+            demand = float(point.get("demand_mw", 0.0) or 0.0)
+            total = float(point.get("total_production_mw", 0.0) or 0.0)
+            if demand > 0.0 or total > 0.0:
+                return point
+
+        return curve[-1]
 
     def switch_mode(self, mode: DataSourceMode) -> SimulationState:
         """Switch execution mode."""

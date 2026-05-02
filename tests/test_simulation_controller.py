@@ -9,6 +9,11 @@ class DummyClient:
         return {
             "timestamp": "2026-01-15T10:00:00",
             "total_mwh": 3000.0,
+            "hydro_mwh": 1800.0,
+            "thermal_mwh": 700.0,
+            "renewable_mwh": 400.0,
+            "import_mwh": 10.0,
+            "export_mwh": 5.0,
         }
 
     def get_hourly_demand(self):
@@ -105,3 +110,62 @@ def test_switch_back_to_automatic_restores_external_data():
     assert automatic_state.mode == DataSourceMode.AUTOMATIC
     assert automatic_state.hydro_mw == 1800.0
     assert automatic_state.demand_mw == 2800.0
+
+
+class DummyClientTrailingZeros(DummyClient):
+    def get_hourly_demand(self):
+        return [
+            {
+                "demand_mw": 3000.0,
+                "total_production_mw": 3012.0,
+                "hydro_mw": 1900.0,
+                "thermal_mw": 800.0,
+                "renewable_mw": 312.0,
+                "import_mw": 0.0,
+                "export_mw": 0.0,
+            },
+            {
+                "demand_mw": 0.0,
+                "total_production_mw": 0.0,
+                "hydro_mw": 0.0,
+                "thermal_mw": 0.0,
+                "renewable_mw": 0.0,
+                "import_mw": 0.0,
+                "export_mw": 0.0,
+            },
+        ]
+
+
+class DummyClientAllZeros(DummyClient):
+    def get_hourly_demand(self):
+        return [
+            {
+                "demand_mw": 0.0,
+                "total_production_mw": 0.0,
+                "hydro_mw": 0.0,
+                "thermal_mw": 0.0,
+                "renewable_mw": 0.0,
+                "import_mw": 0.0,
+                "export_mw": 0.0,
+            }
+        ]
+
+
+def test_sync_uses_last_non_zero_hourly_point_when_tail_is_zero():
+    controller = SimulationController(cenace_client=DummyClientTrailingZeros())
+    state = controller.sync_from_microservice()
+
+    assert state.demand_mw == 3000.0
+    assert state.hydro_mw == 1900.0
+    assert state.thermal_mw == 800.0
+    assert state.renewable_mw == 312.0
+
+
+def test_sync_falls_back_to_production_when_hourly_curve_is_all_zero():
+    controller = SimulationController(cenace_client=DummyClientAllZeros())
+    state = controller.sync_from_microservice()
+
+    assert state.demand_mw == 3000.0
+    assert state.hydro_mw == 1800.0
+    assert state.thermal_mw == 700.0
+    assert state.renewable_mw == 400.0
