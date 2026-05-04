@@ -3,6 +3,8 @@ Ventana principal de la aplicación PyQt6
 """
 import copy
 import json
+import logging
+from datetime import datetime
 from PyQt6.QtWidgets import (
     QMainWindow,
     QWidget,
@@ -23,6 +25,14 @@ from PyQt6.QtCore import Qt, QTimer
 
 from src.application.scenario_manager import ScenarioManager
 from src.application.simulation_controller import SimulationController
+from src.application.manual_catalog_baseline import (
+    build_manual_catalog_from_automatic_state_with_diagnostics,
+    build_manual_catalog_from_live_with_diagnostics,
+    has_usable_live_snapshot,
+    is_snapshot_timestamp_fresh,
+    neutralize_hydro_reservoir_for_entry,
+    normalize_hydro_contract,
+)
 from src.application.plant_generation_mapper import (
     calculate_plant_utilization,
     map_live_generation_to_centrales,
@@ -59,7 +69,14 @@ from config.settings import (
     GLOBAL_DROUGHT_MIN,
     GLOBAL_DROUGHT_MAX,
     CHART_HISTORY_MAX_POINTS,
+    MANUAL_BASELINE_SNAPSHOT_MAX_AGE_MINUTES,
+    MANUAL_ENTRY_HYDRO_NEUTRALIZE_ON_SWITCH,
+    MANUAL_ENTRY_HYDRO_NEUTRAL_RESERVOIR_PCT,
+    MODE_SWITCH_DIAGNOSTICS_ENABLED,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class MainWindow(QMainWindow):
@@ -193,7 +210,12 @@ class MainWindow(QMainWindow):
         self.hydro_reservoir_spin.setSingleStep(5.0)
         self.hydro_reservoir_spin.setSuffix(" %")
         self.hydro_reservoir_spin.setEnabled(False)
-        central_form.addRow("Embalse", self.hydro_reservoir_spin)
+        self.hydro_reservoir_spin.setToolTip(
+            "Factor hídrico [0–100%] aplicado sobre la capacidad disponible.\n"
+            "100% = sin restricción hídrica (turbina a plena potencia declarada).\n"
+            "No representa el nivel físico del embalse en metros o hm³."
+        )
+        central_form.addRow("Disp. hídrica %", self.hydro_reservoir_spin)
 
         layout.addLayout(central_form)
 
@@ -214,6 +236,31 @@ class MainWindow(QMainWindow):
         self.apply_central_button.setEnabled(False)
         self.apply_central_button.clicked.connect(self._apply_central_edit)
         layout.addWidget(self.apply_central_button)
+
+        interconnection_title = QLabel("Interconexión")
+        interconnection_title.setStyleSheet("font-size: 14px; font-weight: 700;")
+        layout.addWidget(interconnection_title)
+
+        interconnection_form = QFormLayout()
+        self.import_spin = QDoubleSpinBox()
+        self.import_spin.setRange(0.0, 500.0)
+        self.import_spin.setSingleStep(10.0)
+        self.import_spin.setSuffix(" MW")
+        self.import_spin.setEnabled(False)
+        self.import_spin.setToolTip("Energía importada desde redes vecinas (Colombia / Perú).")
+        interconnection_form.addRow("Importación MW", self.import_spin)
+
+        self.export_spin = QDoubleSpinBox()
+        self.export_spin.setRange(0.0, 500.0)
+        self.export_spin.setSingleStep(10.0)
+        self.export_spin.setSuffix(" MW")
+        self.export_spin.setEnabled(False)
+        self.export_spin.setToolTip("Energía exportada hacia redes vecinas (Colombia / Perú).")
+        interconnection_form.addRow("Exportación MW", self.export_spin)
+        layout.addLayout(interconnection_form)
+
+        self.import_spin.valueChanged.connect(self._on_interconnection_changed)
+        self.export_spin.valueChanged.connect(self._on_interconnection_changed)
 
         scenario_title = QLabel("Escenarios")
         scenario_title.setStyleSheet("font-size: 14px; font-weight: 700;")
@@ -298,7 +345,7 @@ class MainWindow(QMainWindow):
         try:
             with open(CENTRALES_JSON, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                centrales = self._normalize_hydro_contract(data.get("data", {}).get("centrales", []))
+                centrales = normalize_hydro_contract(data.get("data", {}).get("centrales", []))
                 self.centrales = centrales
                 self.base_centrales = copy.deepcopy(centrales)
                 self.central_lookup = {str(c.get("id")): c for c in centrales}
@@ -323,14 +370,23 @@ class MainWindow(QMainWindow):
 
     def _toggle_mode(self) -> None:
         """Switch between automatic and manual mode."""
+        pre_state = self.simulation_controller.get_state_snapshot()
         new_mode = (
             DataSourceMode.MANUAL
             if self.simulation_controller.state.mode == DataSourceMode.AUTOMATIC
             else DataSourceMode.AUTOMATIC
         )
         state = self.simulation_controller.switch_mode(new_mode)
+        baseline_source = ""
+        baseline_diagnostics: dict = {}
         if new_mode == DataSourceMode.MANUAL and self.centrales:
-            self.centrales = copy.deepcopy(self.base_centrales)
+            self.centrales, baseline_source, baseline_diagnostics = self._build_manual_entry_catalog(pre_state)
+            if MANUAL_ENTRY_HYDRO_NEUTRALIZE_ON_SWITCH:
+                neutralization = neutralize_hydro_reservoir_for_entry(
+                    self.centrales,
+                    target_reservoir_pct=MANUAL_ENTRY_HYDRO_NEUTRAL_RESERVOIR_PCT,
+                )
+                baseline_diagnostics = {**baseline_diagnostics, **neutralization}
             self.central_lookup = {str(c.get("id")): c for c in self.centrales}
             self._rebuild_installed_by_type()
             self._refresh_central_selector()
@@ -338,10 +394,121 @@ class MainWindow(QMainWindow):
             state = self.simulation_controller.apply_manual_central_catalog(
                 self.centrales,
                 global_drought_factor=(self.global_drought_pct / 100.0),
+                import_mw=pre_state.import_mw,
+                export_mw=pre_state.export_mw,
             )
         elif new_mode == DataSourceMode.AUTOMATIC:
             self.global_drought_pct = GLOBAL_DROUGHT_DEFAULT
         self.event_bus.publish("state_updated", {"state": state, "origin": "mode_switch"})
+        if baseline_source:
+            self.status_label.setText(f"Estado: MANUAL inicializado desde {baseline_source}.")
+        if MODE_SWITCH_DIAGNOSTICS_ENABLED and new_mode == DataSourceMode.MANUAL:
+            self._log_mode_switch_diagnostics(pre_state, state, baseline_source, baseline_diagnostics)
+
+    def _build_manual_entry_catalog(self, pre_state: SimulationState) -> tuple[list[dict], str, dict]:
+        """Build MANUAL baseline from latest live plants when available, else JSON baseline."""
+
+        live_plants = self.simulation_controller.get_latest_plants_snapshot()
+        is_fresh = is_snapshot_timestamp_fresh(
+            pre_state.source_timestamp,
+            MANUAL_BASELINE_SNAPSHOT_MAX_AGE_MINUTES,
+            now=datetime.now(),
+        )
+
+        if self.base_centrales and has_usable_live_snapshot(live_plants) and is_fresh:
+            baseline, diagnostics = build_manual_catalog_from_live_with_diagnostics(
+                self.base_centrales,
+                live_plants,
+            )
+            diagnostics["fallback_reason"] = "none"
+            return baseline, "snapshot live", diagnostics
+
+        if self.base_centrales and pre_state.mode == DataSourceMode.AUTOMATIC:
+            baseline, diagnostics = build_manual_catalog_from_automatic_state_with_diagnostics(
+                self.base_centrales,
+                pre_state,
+            )
+            if not has_usable_live_snapshot(live_plants):
+                diagnostics["fallback_reason"] = "snapshot_live_unavailable"
+            elif not is_fresh:
+                diagnostics["fallback_reason"] = "snapshot_live_stale"
+            else:
+                diagnostics["fallback_reason"] = "snapshot_live_incompatible"
+            return baseline, "estado agregado automatico", diagnostics
+
+        if self.base_centrales and has_usable_live_snapshot(live_plants):
+            baseline, diagnostics = build_manual_catalog_from_live_with_diagnostics(
+                self.base_centrales,
+                live_plants,
+            )
+            diagnostics["fallback_reason"] = "automatic_state_unavailable"
+            return baseline, "snapshot live", diagnostics
+        return copy.deepcopy(self.base_centrales), "JSON base (fallback)", {"fallback_reason": "no_live_or_automatic"}
+
+    def _log_mode_switch_diagnostics(
+        self,
+        pre_state: SimulationState,
+        post_state: SimulationState,
+        baseline_source: str,
+        baseline_diagnostics: dict,
+    ) -> None:
+        """Emit diagnostic summary for AUTOMATIC -> MANUAL transition discrepancies."""
+
+        delta_hydro = float(post_state.hydro_mw - pre_state.hydro_mw)
+        delta_thermal = float(post_state.thermal_mw - pre_state.thermal_mw)
+        delta_renewable = float(post_state.renewable_mw - pre_state.renewable_mw)
+        delta_supply = float(post_state.metrics.total_supply_mw - pre_state.metrics.total_supply_mw)
+        delta_reserve = float(post_state.metrics.reserve_margin_pct - pre_state.metrics.reserve_margin_pct)
+
+        causes: list[str] = []
+        hydro_drop = pre_state.hydro_mw > 0.0 and post_state.hydro_mw < (pre_state.hydro_mw * 0.85)
+        if hydro_drop:
+            causes.append("hydro_factor_gap")
+
+        renewable_drop = pre_state.renewable_mw > 0.0 and post_state.renewable_mw < (pre_state.renewable_mw * 0.7)
+        unmatched = baseline_diagnostics.get("unmatched_pool_by_type", {})
+        if renewable_drop and float(unmatched.get("RENEWABLE", 0.0) or 0.0) > 0.0:
+            causes.append("renewable_type_mapping_gap")
+
+        unallocated = baseline_diagnostics.get("unallocated_by_type_mw", {})
+        unallocated_total = float(sum(float(v) for v in unallocated.values())) if isinstance(unallocated, dict) else 0.0
+        if delta_supply < -200.0 and unallocated_total > 0.0:
+            causes.append("catalog_capacity_gap")
+
+        status_changes = baseline_diagnostics.get("status_changes", [])
+        if len(status_changes) >= 5:
+            causes.append("status_transition_gap")
+
+        if baseline_diagnostics.get("hydro_entry_neutralized") is True:
+            causes.append("hydro_entry_neutralized")
+
+        fallback_reason = str(baseline_diagnostics.get("fallback_reason", "none"))
+
+        logger.warning(
+            "mode_switch_diagnostics source=%s pre={hydro:%.2f,thermal:%.2f,renewable:%.2f,supply:%.2f,reserve:%.2f} "
+            "post={hydro:%.2f,thermal:%.2f,renewable:%.2f,supply:%.2f,reserve:%.2f} "
+            "delta={hydro:%.2f,thermal:%.2f,renewable:%.2f,supply:%.2f,reserve:%.2f} causes=%s "
+            "fallback_reason=%s baseline=%s",
+            baseline_source,
+            pre_state.hydro_mw,
+            pre_state.thermal_mw,
+            pre_state.renewable_mw,
+            pre_state.metrics.total_supply_mw,
+            pre_state.metrics.reserve_margin_pct,
+            post_state.hydro_mw,
+            post_state.thermal_mw,
+            post_state.renewable_mw,
+            post_state.metrics.total_supply_mw,
+            post_state.metrics.reserve_margin_pct,
+            delta_hydro,
+            delta_thermal,
+            delta_renewable,
+            delta_supply,
+            delta_reserve,
+            causes or ["none"],
+            fallback_reason,
+            baseline_diagnostics,
+        )
 
     def _reset_manual_baseline(self) -> None:
         """Reset current manual catalog and global drought to deterministic baseline."""
@@ -436,7 +603,7 @@ class MainWindow(QMainWindow):
             loaded_centrales = bundle.get("centrales")
 
             if loaded_centrales is not None:
-                self.centrales = self._normalize_hydro_contract(loaded_centrales)
+                self.centrales = normalize_hydro_contract(loaded_centrales)
                 self.central_lookup = {str(c.get("id")): c for c in self.centrales}
                 self._rebuild_installed_by_type()
                 self._refresh_central_selector()
@@ -491,12 +658,20 @@ class MainWindow(QMainWindow):
         self.reset_manual_button.setEnabled(is_manual)
         self.hydro_reservoir_spin.setEnabled(is_manual and self.central_type_label.text().upper() == "HYDRO")
         self.apply_central_button.setEnabled(is_manual and self.selected_central_id is not None)
+        self.import_spin.setEnabled(is_manual)
+        self.export_spin.setEnabled(is_manual)
         self.global_drought_slider.blockSignals(True)
         self.global_drought_slider.setValue(int(round(state.global_drought_factor * 100.0)))
         self.global_drought_slider.blockSignals(False)
         self.global_drought_label.setText(
             f"Sequia global: {int(round(state.global_drought_factor * 100.0))}%"
         )
+        self.import_spin.blockSignals(True)
+        self.import_spin.setValue(state.import_mw)
+        self.import_spin.blockSignals(False)
+        self.export_spin.blockSignals(True)
+        self.export_spin.setValue(state.export_mw)
+        self.export_spin.blockSignals(False)
         self.metrics_label.setText(self._format_metrics(state))
         self._update_map_overlay(state)
 
@@ -651,6 +826,18 @@ class MainWindow(QMainWindow):
         )
         self.event_bus.publish("state_updated", {"state": state, "origin": "global_drought"})
 
+    def _on_interconnection_changed(self) -> None:
+        """Apply import/export changes in manual mode and refresh KPIs immediately."""
+
+        if self.simulation_controller.state.mode != DataSourceMode.MANUAL:
+            return
+
+        state = self.simulation_controller.apply_manual_interconnection(
+            import_mw=self.import_spin.value(),
+            export_mw=self.export_spin.value(),
+        )
+        self.event_bus.publish("state_updated", {"state": state, "origin": "interconnection"})
+
     def _apply_central_edit(self) -> None:
         """Apply selected central edits while in manual mode."""
 
@@ -675,23 +862,6 @@ class MainWindow(QMainWindow):
         )
         self.event_bus.publish("state_updated", {"state": state, "origin": "central_edit"})
         self.status_label.setText(f"Estado: Central actualizada ({self.selected_central_id}).")
-
-    @staticmethod
-    def _normalize_hydro_contract(centrales: list[dict]) -> list[dict]:
-        """Normalize hydro fields to current UI contract (reservoir only)."""
-
-        normalized = copy.deepcopy(centrales)
-        for central in normalized:
-            if str(central.get("type", "")).upper() != "HYDRO":
-                continue
-            reservoir = float(
-                central.get("reservoir_level_pct", HYDRO_DEFAULT_RESERVOIR_LEVEL_PCT)
-                or HYDRO_DEFAULT_RESERVOIR_LEVEL_PCT
-            )
-            central["reservoir_level_pct"] = max(0.0, min(100.0, reservoir))
-            central.pop("inflow_index", None)
-            central.pop("drought_factor", None)
-        return normalized
 
     @staticmethod
     def _format_metrics(state: SimulationState) -> str:

@@ -108,6 +108,8 @@ class SimulationController:
         self,
         centrales: list[dict],
         global_drought_factor: float | None = None,
+        import_mw: float | None = None,
+        export_mw: float | None = None,
     ) -> SimulationState:
         """Recalculate generation split and KPIs from edited central catalog in manual mode."""
 
@@ -117,6 +119,11 @@ class SimulationController:
         if global_drought_factor is not None:
             self.state.global_drought_factor = max(0.0, min(1.0, float(global_drought_factor)))
 
+        if import_mw is not None:
+            self.state.import_mw = max(0.0, float(import_mw))
+        if export_mw is not None:
+            self.state.export_mw = max(0.0, float(export_mw))
+
         generation_by_type = aggregate_generation_by_type(
             centrales=centrales,
             global_drought_factor=self.state.global_drought_factor,
@@ -124,6 +131,22 @@ class SimulationController:
         self.state.hydro_mw = generation_by_type.get("HYDRO", 0.0)
         self.state.thermal_mw = generation_by_type.get("THERMAL", 0.0)
         self.state.renewable_mw = generation_by_type.get("WIND", 0.0) + generation_by_type.get("SOLAR", 0.0)
+        self.state.last_manual_edit = datetime.now()
+        self.state.metrics = self._calculate_metrics()
+        return self.state
+
+    def apply_manual_interconnection(
+        self,
+        import_mw: float,
+        export_mw: float,
+    ) -> SimulationState:
+        """Update interconnection values (import/export) and recalculate KPIs in manual mode."""
+
+        if self.state.mode != DataSourceMode.MANUAL:
+            return self.state
+
+        self.state.import_mw = max(0.0, float(import_mw))
+        self.state.export_mw = max(0.0, float(export_mw))
         self.state.last_manual_edit = datetime.now()
         self.state.metrics = self._calculate_metrics()
         return self.state

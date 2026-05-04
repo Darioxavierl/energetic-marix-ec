@@ -169,3 +169,62 @@ def test_sync_falls_back_to_production_when_hourly_curve_is_all_zero():
     assert state.hydro_mw == 1800.0
     assert state.thermal_mw == 700.0
     assert state.renewable_mw == 400.0
+
+
+def test_apply_manual_central_catalog_preserves_import_export():
+    controller = SimulationController(cenace_client=DummyClient())
+    controller.sync_from_microservice()
+    controller.switch_mode(DataSourceMode.MANUAL)
+
+    centrales = [
+        {
+            "id": "h1",
+            "type": "HYDRO",
+            "status": "ONLINE",
+            "available_capacity_mw": 1000.0,
+            "reservoir_level_pct": 100.0,
+        }
+    ]
+    state = controller.apply_manual_central_catalog(
+        centrales,
+        global_drought_factor=0.0,
+        import_mw=150.0,
+        export_mw=20.0,
+    )
+
+    assert state.import_mw == 150.0
+    assert state.export_mw == 20.0
+    assert state.metrics.total_supply_mw == 1000.0 + 150.0 - 20.0
+
+
+def test_apply_manual_interconnection_updates_kpis():
+    controller = SimulationController(cenace_client=DummyClient())
+    controller.sync_from_microservice()
+    controller.switch_mode(DataSourceMode.MANUAL)
+
+    centrales = [
+        {
+            "id": "t1",
+            "type": "THERMAL",
+            "status": "ONLINE",
+            "available_capacity_mw": 500.0,
+        }
+    ]
+    controller.apply_manual_central_catalog(centrales, global_drought_factor=0.0)
+
+    state = controller.apply_manual_interconnection(import_mw=200.0, export_mw=50.0)
+
+    assert state.import_mw == 200.0
+    assert state.export_mw == 50.0
+    # thermal(500) + import(200) - export(50) = 650
+    assert state.metrics.total_supply_mw == 500.0 + 200.0 - 50.0
+
+
+def test_apply_manual_interconnection_blocked_outside_manual():
+    controller = SimulationController(cenace_client=DummyClient())
+    controller.sync_from_microservice()
+
+    original_import = controller.state.import_mw
+    controller.apply_manual_interconnection(import_mw=999.0, export_mw=0.0)
+
+    assert controller.state.import_mw == original_import
