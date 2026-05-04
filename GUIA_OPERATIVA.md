@@ -13,6 +13,7 @@ Esta guia describe el orden recomendado para operar el sistema integrado:
 - Python 3.11+
 - Entorno virtual disponible en `cenace_scraper_service/.venv`
 - Dependencias instaladas en ambos componentes
+- En `cenace_scraper_service/.env`, usar `API_RELOAD=False` para ejecucion estable del scheduler/scraper
 
 ## Secuencia de Arranque
 
@@ -64,14 +65,15 @@ Push-Location "g:/My Drive/Universidad/10. DECIMO/Regulacion/Energetico/energeti
 
 1. Sincronizar en `AUTOMATIC` y guardar escenario base (ejemplo: `base_hoy`).
 2. Cambiar a `MANUAL`.
-3. Seleccionar una central `HYDRO` y ajustar `Embalse`.
+3. Seleccionar una central `HYDRO` y ajustar `Disp. hidrica %`.
 4. Ajustar `Sequia global` para escalar el estres hidrico del sistema.
-5. Confirmar en panel KPI el impacto en `Hidro MW`, `Oferta total`, `Reserva %` y `Riesgo`.
-6. Si el escenario manual queda degradado por pruebas previas, usar `Reset MANUAL` para reiniciar baseline.
-7. Guardar escenario variante (ejemplo: `sequia_media` o `sequia_severa`).
-8. Restaurar el escenario base para comparar nuevamente.
+5. Opcionalmente, ajustar `Importacion MW` y `Exportacion MW` en la seccion Interconexion para modelar escenarios de corte de interconexion.
+6. Confirmar en panel KPI el impacto en `Hidro MW`, `Oferta total`, `Reserva %` y `Riesgo`.
+7. Si el escenario manual queda degradado por pruebas previas, usar `Reset MANUAL` para reiniciar baseline.
+8. Guardar escenario variante (ejemplo: `sequia_media` o `sequia_severa`).
+9. Restaurar el escenario base para comparar nuevamente.
 
-Resultado esperado: al bajar embalse o subir sequia global, la generacion hidro debe caer de forma monotona.
+Resultado esperado: al bajar disponibilidad hidrica o subir sequia global, la generacion hidro debe caer de forma monotona. Al reducir importacion, la oferta total debe caer proporcionalmente.
 
 ## Flujo Recomendado de Analisis Visual
 
@@ -96,9 +98,17 @@ Resultado esperado: al bajar embalse o subir sequia global, la generacion hidro 
 - Confirmar que la restauracion se realizo en modo `MANUAL` para recomputo de KPI por catalogo local.
 
 4. Cambio AUTOMATIC -> MANUAL cae en riesgo alto inmediatamente
-- Usar `Reset MANUAL` para reconstruir baseline manual limpio.
+- El baseline MANUAL se inicializa desde el ultimo snapshot de plantas CENACE (si es reciente, menos de 30 minutos) o del estado agregado automatico como fallback.
+- La disponibilidad hidrica de cada central se neutraliza a 100% al entrar a MANUAL para evitar penalizacion inmediata.
+- Los MW de importacion y exportacion se copian desde el ultimo estado automatico.
+- Si aun asi el KPI cae, usar `Reset MANUAL` para reconstruir baseline limpio.
 - Verificar que `Sequia global` este en 0% antes de iniciar nuevo what-if.
 
 5. Datos no cambian en automatico
 - Confirmar scheduler activo en microservicio.
 - Ejecutar boton `Sincronizar ahora` en el simulador.
+
+6. Error `NotImplementedError` de `asyncio.create_subprocess_exec` al iniciar scraping
+- Causa comun: ejecucion con `API_RELOAD=True` en Windows junto con Playwright.
+- Accion: configurar `API_RELOAD=False` y reiniciar microservicio.
+- Nota: usar `reload` solo para debugging puntual, no para ejecucion operativa continua.

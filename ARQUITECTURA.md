@@ -48,8 +48,9 @@ Archivos principales:
 Responsabilidades:
 
 - Coordinar sincronizacion contra microservicio
-- Gestionar transicion AUTOMATIC <-> MANUAL
+- Gestionar transicion AUTOMATIC <-> MANUAL con carry-over de import/export
 - Recalcular estado y KPI desde catalogo local en modo manual
+- Edicion de interconexion (import/export) en tiempo real en modo MANUAL
 - Guardar/restaurar escenarios versionados
 - Traducir datos de plantas en vivo a catalogo local para overlay en automatico
 
@@ -122,13 +123,13 @@ Regla de integracion:
 
 ### 4.2 Modo MANUAL
 
-1. Usuario edita demanda, estado de central o controles hidricos.
-1. Usuario edita demanda, estado de central, embalse o sequia global.
-2. MainWindow envia catalogo local al SimulationController.
-3. Controller agrega generacion por central/tipo (incluye hidro fisico).
-4. Domain recalcula KPI inmediatamente.
-5. UI actualiza KPI y leyenda/mapa en el mismo ciclo.
-6. Panel de graficas usa historial de sesion y marca eventos operativos.
+1. Usuario edita demanda, estado de central, disponibilidad hidrica, interconexion o sequia global.
+2. MainWindow envia catalogo local al SimulationController (o llama apply_manual_interconnection para import/export).
+3. Al entrar a MANUAL: import_mw y export_mw se copian del ultimo estado automatico para garantizar continuidad.
+4. Controller agrega generacion por central/tipo (incluye hidro fisico) y aplica import/export en el calculo de oferta.
+5. Domain recalcula KPI inmediatamente.
+6. UI actualiza KPI y leyenda/mapa en el mismo ciclo.
+7. Panel de graficas usa historial de sesion y marca eventos operativos.
 
 ## 5. Modelo de Estado
 
@@ -161,14 +162,15 @@ $$
 
 Donde $F_{hidraulico}$ combina:
 
-- nivel de embalse
-- sequia global
+- `Disp. hidrica %` por central: factor operativo editable [0-100%] que representa la fraccion de potencia disponible sin restriccion hidrica. 100% = plena potencia declarada. No es el nivel fisico del embalse.
+- Sequia global: penalizacion transversal a todas las centrales hidro
 
 Propiedades del modelo:
 
 - Factores acotados para estabilidad numerica
 - Salida acotada a $[0, P_{disponible}]$
 - OFFLINE/MAINTENANCE produce 0 MW
+- Al entrar a MANUAL, la disponibilidad hidrica se neutraliza a 100% para evitar penalizacion inmediata en la transicion
 
 ## 7. KPI y Riesgo
 
@@ -277,7 +279,7 @@ Suite validada:
 
 Estado actual:
 
-- 34 pruebas en verde en ejecucion completa
+- 55 pruebas en verde en ejecucion completa
 
 ## 12. Decisiones Arquitectonicas Activas
 
@@ -291,6 +293,8 @@ Estado actual:
 
 - Mapeo de nombres de plantas live a catalogo local sigue heuristico.
 - No hay dinamica temporal multihora de hidrologia (recarga/descarga por paso).
+- El campo `Disp. hidrica %` es un factor operativo; no corresponde al nivel fisico del embalse medido en terreno.
+- Import/Export no se persisten en escenarios guardados; se recuperan del microservicio al volver a AUTOMATIC.
 - El KPI es operativo agregado y no un flujo AC completo de red.
 
 ## 14. Roadmap Tecnico
