@@ -1,19 +1,31 @@
 # Manual Operativo Integral del Sistema
 
-Version: 1.0 (borrador operativo inicial)
+Version: 1.1 (iteracion editorial final)
 Fecha: 2026-05-04
 Alcance: Simulador desktop de matriz energetica + microservicio CENACE scraper
+Publico objetivo: operadores, analistas tecnicos y evaluadores academicos
 
-## Estado de elaboracion por fases
+## Resumen Ejecutivo
 
-- Fase 1: Alcance, objetivos, arquitectura macro. Completada.
-- Fase 2: Arquitectura funcional del simulador y flujos de modo. Completada.
-- Fase 3: Modelo matematico, reglas de negocio y ecuaciones. Completada.
-- Fase 4: GUI operativa y lectura de paneles. Completada.
-- Fase 5: Microservicio en profundidad. Completada.
-- Fase 6: Contratos de integracion y continuidad AUTOMATIC-MANUAL. Completada.
-- Fase 7: Operacion y troubleshooting. Completada.
-- Fase 8: Trazabilidad y limites del modelo. Completada.
+Este documento presenta una vista integral del sistema de simulacion de matriz energetica, desde la captura de datos en CENACE hasta la visualizacion de KPI y la ejecucion de escenarios manuales. El enfoque es tecnico-operativo: explica procesos, reglas, ecuaciones, entradas/salidas y decisiones de operacion, evitando detalle de implementacion linea por linea.
+
+Estado de cobertura:
+
+- Arquitectura y flujos principales: completo.
+- Procesos criticos con diagramas y tablas I/O: completo.
+- Modelo matematico con definicion de variables y ejemplos: completo.
+- GUI y microservicio con trazabilidad operativa: completo.
+- Troubleshooting, limites y cierre para entrega: completo.
+
+## Guia de Lectura
+
+Ruta recomendada segun objetivo:
+
+- Comprender el sistema completo: secciones 2 y 3.
+- Entender por que cambia un KPI: secciones 3.3 y 5.
+- Operar la GUI en escenarios what-if: secciones 6 y 9.
+- Diagnosticar fallos de datos/sincronizacion: secciones 7, 8 y 10.
+- Fundamentar analisis academico: secciones 5, 11 y 12.
 
 ---
 
@@ -68,14 +80,14 @@ flowchart LR
 
 ## 3. Arquitectura funcional del simulador
 
-## 3.1 Capas y responsabilidades
+### 3.1 Capas y responsabilidades
 
 - Capa de presentacion (UI): panel de control, mapa, graficas, interaccion del usuario.
 - Capa de aplicacion: orquesta sincronizacion, cambio de modo y recalculo de estado.
 - Capa de dominio: ecuaciones puras de oferta, balance, reserva, riesgo y modelo hidrico.
 - Capa de infraestructura: cliente API del microservicio y bus de eventos interno.
 
-## 3.2 Entidad principal: estado de simulacion
+### 3.2 Entidad principal: estado de simulacion
 
 El estado de trabajo contiene, entre otros campos:
 
@@ -87,7 +99,7 @@ El estado de trabajo contiene, entre otros campos:
 - Timestamp de origen y timestamp de ultima edicion manual.
 - KPI calculados: oferta total, balance, reserva y riesgo.
 
-## 3.3 Entradas y salidas de procesos clave
+### 3.3 Entradas y salidas de procesos clave
 
 ### Proceso A: sincronizacion automatica
 
@@ -275,7 +287,7 @@ Salidas:
 
 ## 4. Flujos de trabajo operativos
 
-## 4.1 Flujo normal de observacion en tiempo real
+### 4.1 Flujo normal de observacion en tiempo real
 
 ```text
 [Inicio simulador]
@@ -284,7 +296,7 @@ Salidas:
    -> [Monitoreo KPI + graficas + mapa]
 ```
 
-## 4.2 Flujo de analisis what-if
+### 4.2 Flujo de analisis what-if
 
 ```text
 [AUTOMATIC estable]
@@ -296,7 +308,7 @@ Salidas:
    -> [Comparar contra base]
 ```
 
-## 4.3 Flujo de recuperacion rapida
+### 4.3 Flujo de recuperacion rapida
 
 ```text
 [Escenario manual degradado]
@@ -309,7 +321,7 @@ Salidas:
 
 ## 5. Modelo matematico y ecuaciones
 
-## 5.0 Definicion de variables (notacion)
+### 5.0 Definicion de variables (notacion)
 
 - $D$: demanda total del sistema (MW).
 - $S$: oferta total neta del sistema (MW).
@@ -326,7 +338,7 @@ Salidas:
 - $DispHidrica$: disponibilidad hidrica por central (%).
 - $SequiaGlobal$: penalizacion hidrica global (adimensional, entre 0 y 1).
 
-## 5.1 Oferta total neta
+### 5.1 Oferta total neta
 
 La oferta neta del sistema se calcula como:
 
@@ -348,7 +360,7 @@ Interpretacion operativa:
 - Aumentar importacion incrementa oferta disponible.
 - Aumentar exportacion reduce oferta disponible interna.
 
-## 5.2 Balance
+### 5.2 Balance
 
 $$
 B = S - D
@@ -363,7 +375,7 @@ Donde:
 - $B > 0$: superavit.
 - $B < 0$: deficit.
 
-## 5.3 Margen de reserva
+### 5.3 Margen de reserva
 
 $$
 RM = \frac{S - D}{D} \times 100
@@ -377,7 +389,7 @@ Donde:
 
 Si $D \le 0$, el sistema devuelve 0 por estabilidad numerica.
 
-## 5.4 Clasificacion de riesgo
+### 5.4 Clasificacion de riesgo
 
 La clasificacion se deriva del margen de reserva con umbrales configurables:
 
@@ -386,7 +398,7 @@ La clasificacion se deriva del margen de reserva con umbrales configurables:
 - CRITICAL si $0 \le RM < 10$.
 - FAILURE si $RM < 0$.
 
-## 5.5 Modelo hidrico simplificado
+### 5.5 Modelo hidrico simplificado
 
 Para cada central hidro ONLINE:
 
@@ -409,7 +421,7 @@ Interpretacion clave:
 - Disp. hidrica es un factor operativo, no una medicion fisica directa del embalse.
 - Sequia global penaliza transversalmente todas las centrales hidro.
 
-## 5.6 Ejemplos numericos operativos
+### 5.6 Ejemplos numericos operativos
 
 ### Ejemplo 1: escenario base con reserva positiva
 
@@ -508,7 +520,7 @@ Interpretacion:
 
 ## 6. GUI operativa: que controla cada panel
 
-## 6.1 Panel de control (lado izquierdo)
+### 6.1 Panel de control (lado izquierdo)
 
 ### Bloque de modo y sincronizacion
 
@@ -557,7 +569,7 @@ Presenta:
 - Reserva.
 - Riesgo.
 
-## 6.2 Mapa
+### 6.2 Mapa
 
 El mapa representa centrales y su estado operativo estimado:
 
@@ -565,7 +577,7 @@ El mapa representa centrales y su estado operativo estimado:
 - Popups con datos operativos por central.
 - Overlay de utilizacion por tipo y por planta.
 
-## 6.3 Panel de graficas
+### 6.3 Panel de graficas
 
 Visuales principales:
 
@@ -584,11 +596,11 @@ Fuente de timeline:
 
 ## 7. Microservicio CENACE scraper en profundidad
 
-## 7.1 Responsabilidad principal
+### 7.1 Responsabilidad principal
 
 Transformar HTML dinamico de CENACE en datos estructurados y consultables por API para el simulador.
 
-## 7.2 Pipeline funcional
+### 7.2 Pipeline funcional
 
 ```text
 [Scheduler]
@@ -619,7 +631,7 @@ flowchart LR
     K --> J
 ```
 
-## 7.3 Cajas funcionales del microservicio
+### 7.3 Cajas funcionales del microservicio
 
 ### Caja 1: Scraper Playwright
 
@@ -643,21 +655,11 @@ Diagrama de caja:
 +-----------------------------------------------------------------------------------+
 ```
 
-Entrada:
+Lectura operativa:
 
-- URL de CENACE.
-- Timeout, selector de espera, modo headless.
-
-Transformacion:
-
-- Renderiza pagina en navegador real.
-- Espera selector objetivo.
-- Extrae HTML final del DOM.
-- Reintenta con backoff exponencial ante fallos.
-
-Salida:
-
-- HTML renderizado listo para parsear.
+- Entrada tipica: URL CENACE + parametros de ejecucion Playwright.
+- Regla principal: render real con espera de selector y reintentos controlados.
+- Salida util: HTML renderizado para parser.
 
 ### Caja 2: Parser
 
@@ -680,20 +682,11 @@ Diagrama de caja:
 +-----------------------------------------------------------------------------------+
 ```
 
-Entrada:
+Lectura operativa:
 
-- HTML renderizado.
-
-Transformacion:
-
-- Extrae resumen energetico (total, hidro, termica, renovable, import, export).
-- Extrae detalle por central.
-- Extrae curva horaria.
-- Valida coherencia basica de datos.
-
-Salida:
-
-- Estructura cruda de produccion, plantas y curva.
+- Entrada tipica: HTML renderizado.
+- Regla principal: extraer resumen, detalle por planta y curva horaria.
+- Salida util: estructura cruda de produccion, plantas y curva.
 
 ### Caja 3: Limpieza y validacion
 
@@ -716,19 +709,11 @@ Diagrama de caja:
 +-----------------------------------------------------------------------------------+
 ```
 
-Entrada:
+Lectura operativa:
 
-- Datos crudos parseados.
-
-Transformacion:
-
-- Normaliza tipos numericos.
-- Redondea y aplica defaults.
-- Valida rangos y coherencia interna.
-
-Salida:
-
-- Payload limpio y consistente para persistencia.
+- Entrada tipica: datos crudos parseados.
+- Regla principal: normalizacion + validacion de coherencia.
+- Salida util: payload limpio para persistencia.
 
 ### Caja 4: Persistencia
 
@@ -753,21 +738,11 @@ Diagrama de caja:
 +-----------------------------------------------------------------------------------+
 ```
 
-Entrada:
+Lectura operativa:
 
-- Snapshot de produccion.
-- Lista de plantas.
-- Curva horaria.
-
-Transformacion:
-
-- Inserta en tablas historicas.
-- Registra log de ejecucion.
-
-Salida:
-
-- Estado persistido en SQLite.
-- Metricas de salud y exito disponibles.
+- Entrada tipica: snapshot agregado, plantas y curva horaria.
+- Regla principal: insercion en tablas historicas + logging de ejecucion.
+- Salida util: datos persistidos y trazabilidad de salud.
 
 ### Caja 5: API FastAPI
 
@@ -789,20 +764,13 @@ Diagrama de caja:
 +-----------------------------------------------------------------------------------+
 ```
 
-Entrada:
+Lectura operativa:
 
-- Consultas del simulador u operadores.
+- Entrada tipica: consultas HTTP de simulador y operadores.
+- Regla principal: consulta por endpoint y serializacion tipada.
+- Salida util: JSON operativo para consumo del cliente.
 
-Transformacion:
-
-- Recupera ultimo snapshot o historicos segun endpoint.
-- Serializa con schemas tipados.
-
-Salida:
-
-- JSON para consumo por cliente.
-
-## 7.4 Endpoints de integracion criticos
+### 7.4 Endpoints de integracion criticos
 
 - Health del servicio.
 - Produccion latest.
@@ -825,13 +793,13 @@ Estos endpoints son la interfaz de contrato principal con el simulador.
 
 ## 8. Contratos de integracion y continuidad de datos
 
-## 8.1 Contrato semantico de campos clave
+### 8.1 Contrato semantico de campos clave
 
 - total_mwh en produccion latest: energia total reportada por fuente externa.
 - hydro_mw, thermal_mw, renewable_mw en curva horaria: potencia por bloque temporal.
 - import/export en curva y en snapshot: intercambio neto con sistemas vecinos.
 
-## 8.2 Politica de frescura y fallback
+### 8.2 Politica de frescura y fallback
 
 Al pasar de AUTOMATIC a MANUAL:
 
@@ -841,7 +809,7 @@ Al pasar de AUTOMATIC a MANUAL:
 
 Esta jerarquia reduce saltos abruptos no deseados.
 
-## 8.3 Continuidad import/export
+### 8.3 Continuidad import/export
 
 La interconexion del estado automatico se preserva al entrar a MANUAL mediante carry-over.
 
@@ -854,7 +822,7 @@ Impacto operativo:
 
 ## 9. Operacion estandar
 
-## 9.1 Secuencia recomendada
+### 9.1 Secuencia recomendada
 
 1. Iniciar microservicio.
 2. Verificar endpoint de health.
@@ -865,7 +833,7 @@ Impacto operativo:
 7. Aplicar cambios controlados en una variable por vez.
 8. Guardar variantes y comparar.
 
-## 9.2 Checklist operativo rapido
+### 9.2 Checklist operativo rapido
 
 Antes de analizar:
 
@@ -887,7 +855,7 @@ Despues de analisis:
 
 ## 10. Troubleshooting operacional
 
-## 10.1 Sintoma -> causa -> accion
+### 10.1 Sintoma -> causa -> accion
 
 ### Caso 1
 
@@ -972,7 +940,17 @@ Este manual se fundamenta en comportamiento implementado en:
 
 ---
 
-## 13. Glosario
+## 13. Conclusiones Operativas
+
+1. El sistema mantiene separacion clara entre adquisicion de datos (microservicio) y simulacion operativa (desktop), lo que facilita diagnostico y evolucion.
+2. La continuidad AUTOMATIC -> MANUAL se gestiona de forma controlada mediante baseline jerarquico, neutralizacion hidrica de entrada y carry-over de import/export.
+3. Los KPI se recalculan con reglas deterministas y trazables, permitiendo auditoria tecnica y comparacion de escenarios.
+4. El modelo es adecuado para analisis operativo y pedagogico, con limites explicitados para evitar sobreinterpretacion fisica.
+5. El documento queda apto para entrega academica/profesional al integrar arquitectura, metodos, ecuaciones, visualizacion y guias de operacion en un unico artefacto.
+
+---
+
+## 14. Glosario
 
 - AUTOMATIC: modo de estado sincronizado con microservicio.
 - MANUAL: modo de simulacion editable para escenarios.
@@ -984,7 +962,7 @@ Este manual se fundamenta en comportamiento implementado en:
 
 ---
 
-## 14. Anexo A: diagrama I/O del nucleo de simulacion
+## 15. Anexo A: diagrama I/O del nucleo de simulacion
 
 ```text
 +--------------------------------------------------------------+
@@ -1010,7 +988,7 @@ Este manual se fundamenta en comportamiento implementado en:
 +--------------------------------------------------------------+
 ```
 
-## 15. Anexo B: diagrama I/O del microservicio
+## 16. Anexo B: diagrama I/O del microservicio
 
 ```text
 +--------------------------------------------------------------+
