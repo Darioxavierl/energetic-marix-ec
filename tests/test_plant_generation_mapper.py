@@ -46,3 +46,18 @@ def test_calculate_plant_utilization_clamps_to_one():
     assert utilization["a"] == 1.0
     assert utilization["b"] == 0.2
     assert utilization["c"] == 0.0
+
+
+def test_map_live_generation_distributes_generic_renewable_to_wind_and_solar():
+    centrales = [
+        {"id": "w1", "name": "Villonaco", "type": "WIND", "installed_capacity_mw": 100},
+        {"id": "s1", "name": "Solar Sur", "type": "SOLAR", "installed_capacity_mw": 300},
+    ]
+    live_plants = [
+        {"plant_name": "Renovable", "plant_type": "RENEWABLE", "mwh": 400},
+    ]
+
+    mapped = map_live_generation_to_centrales(centrales, live_plants)
+
+    assert round(mapped["w1"], 1) == 100.0
+    assert round(mapped["s1"], 1) == 300.0

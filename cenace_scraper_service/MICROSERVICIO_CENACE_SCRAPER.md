@@ -635,9 +635,11 @@ TOTAL                      28 tests ✅ (100% pass rate)
 
 ```bash
 source venv/bin/activate
+# Recomendado para scheduler + Playwright estables (cross-platform)
+export API_RELOAD=False
 python main.py
 
-# O con uvicorn directo
+# O con uvicorn directo (debug)
 uvicorn main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
@@ -737,6 +739,21 @@ fixture 'db' not found
 1. Sitio web CENACE no disponible → Usar VPN, esperar
 2. Formato HTML cambió → Actualizar selectores en `html_parser.py`
 3. Timeout → Aumentar `CENACE_TIMEOUT` en .env
+
+### Problema: `NotImplementedError` en `asyncio.create_subprocess_exec`
+
+**Síntoma**:
+```
+NotImplementedError
+... asyncio.create_subprocess_exec ...
+```
+
+**Causa habitual**:
+- En Windows, Playwright puede fallar si el servicio corre con `API_RELOAD=True`.
+
+**Solución**:
+- Configurar `API_RELOAD=False` en `.env`.
+- Reiniciar microservicio y validar primer ciclo de scraping.
 
 ### Problema: BD corrupta
 

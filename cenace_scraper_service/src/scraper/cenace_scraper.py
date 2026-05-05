@@ -3,6 +3,7 @@ Core scraper: extrae datos de CENACE usando Playwright (browser real)
 """
 
 import asyncio
+import sys
 from datetime import datetime
 from typing import Optional, Dict
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
@@ -185,11 +186,20 @@ class CENACEScraperSync(CENACEScraper):
     (BackgroundScheduler ejecuta jobs en threads, no en event loop).
     """
 
+    @staticmethod
+    def _build_event_loop() -> asyncio.AbstractEventLoop:
+        """Create an event loop compatible with subprocess-based Playwright launch."""
+
+        if sys.platform.startswith("win") and hasattr(asyncio, "ProactorEventLoop"):
+            return asyncio.ProactorEventLoop()
+        return asyncio.new_event_loop()
+
     def scrape_production_data(self) -> Optional[Dict]:  # type: ignore[override]
         """Versión sincrónica: crea un event loop nuevo por ejecución"""
-        loop = asyncio.new_event_loop()
+        loop = self._build_event_loop()
         asyncio.set_event_loop(loop)
         try:
             return loop.run_until_complete(super().scrape_production_data())
         finally:
             loop.close()
+            asyncio.set_event_loop(None)

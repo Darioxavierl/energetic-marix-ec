@@ -57,6 +57,21 @@ def map_live_generation_to_centrales(
 ) -> dict[str, float]:
     """Map live plant generation to static centrales; distribute unmatched by type."""
 
+    mapped, _ = map_live_generation_to_centrales_with_diagnostics(
+        centrales=centrales,
+        live_plants=live_plants,
+        min_match_score=min_match_score,
+    )
+    return mapped
+
+
+def map_live_generation_to_centrales_with_diagnostics(
+    centrales: list[dict],
+    live_plants: list[dict],
+    min_match_score: float = 0.5,
+) -> tuple[dict[str, float], dict]:
+    """Map live generation and return diagnostics for matching/distribution quality."""
+
     generation_by_id = {str(c.get("id")): 0.0 for c in centrales}
     central_type = {str(c.get("id")): str(c.get("type", "")).upper() for c in centrales}
     central_capacity = {
@@ -65,6 +80,8 @@ def map_live_generation_to_centrales(
 
     unmatched_pool_by_type: dict[str, float] = defaultdict(float)
     used_ids: set[str] = set()
+    direct_matches = 0
+    distributed_matches = 0
 
     for live in live_plants:
         live_name = str(live.get("plant_name", ""))
@@ -92,8 +109,24 @@ def map_live_generation_to_centrales(
             cid = str(best_candidate.get("id"))
             generation_by_id[cid] += live_mw
             used_ids.add(cid)
+            direct_matches += 1
         else:
             unmatched_pool_by_type[live_type] += live_mw
+
+    # Map generic live renewable type into WIND/SOLAR local catalog by installed capacity.
+    renewable_pool = float(unmatched_pool_by_type.pop("RENEWABLE", 0.0) or 0.0)
+    if renewable_pool > 0.0:
+        renewable_ids = [
+            cid for cid, ctype in central_type.items() if ctype in {"WIND", "SOLAR"}
+        ]
+        renewable_capacity = sum(max(0.0, central_capacity[cid]) for cid in renewable_ids)
+        if renewable_capacity > 0.0:
+            for cid in renewable_ids:
+                share = max(0.0, central_capacity[cid]) / renewable_capacity
+                generation_by_id[cid] += renewable_pool * share
+                distributed_matches += 1
+        else:
+            unmatched_pool_by_type["RENEWABLE"] += renewable_pool
 
     for plant_type, pool_mw in unmatched_pool_by_type.items():
         if pool_mw <= 0.0:
@@ -106,8 +139,14 @@ def map_live_generation_to_centrales(
         for cid in type_ids:
             share = max(0.0, central_capacity[cid]) / total_capacity
             generation_by_id[cid] += pool_mw * share
+            distributed_matches += 1
 
-    return generation_by_id
+    diagnostics = {
+        "direct_matches": direct_matches,
+        "distributed_matches": distributed_matches,
+        "unmatched_pool_by_type": {k: float(v) for k, v in unmatched_pool_by_type.items() if float(v) > 0.0},
+    }
+    return generation_by_id, diagnostics
 
 
 def calculate_plant_utilization(

@@ -33,7 +33,7 @@ SCRAPER_INTERVAL_MINUTES = int(os.getenv("SCRAPER_INTERVAL_MINUTES", "15"))
 # Configuración de API
 API_HOST = os.getenv("API_HOST", "127.0.0.1")
 API_PORT = int(os.getenv("API_PORT", "8001"))
-API_RELOAD = os.getenv("API_RELOAD", "True").lower() == "true"
+API_RELOAD = os.getenv("API_RELOAD", "False").lower() == "true"
 
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
