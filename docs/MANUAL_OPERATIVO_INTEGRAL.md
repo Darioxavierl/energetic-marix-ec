@@ -91,6 +91,42 @@ El estado de trabajo contiene, entre otros campos:
 
 ### Proceso A: sincronizacion automatica
 
+Diagrama de caja (vista rapida):
+
+```text
++-----------------------------------------------------------------------------------+
+| Proceso A: Sincronizacion automatica                                              |
+|-----------------------------------------------------------------------------------|
+| Entradas                                                                          |
+| - /production/latest                                                              |
+| - /demand/hourly                                                                  |
+| - /plants/latest (si disponible)                                                  |
+|                                                                                   |
+| Reglas / Transformaciones                                                         |
+| - Tomar ultimo punto horario efectivo (evitar cola en cero)                      |
+| - Fallback a snapshot agregado si faltan valores horarios                         |
+| - Recalcular KPI: oferta, balance, reserva, riesgo                               |
+|                                                                                   |
+| Salidas                                                                           |
+| - SimulationState en modo AUTOMATIC                                               |
+| - Payload para mapa, KPI textual y charts                                         |
++-----------------------------------------------------------------------------------+
+```
+
+Diagrama de flujo:
+
+```mermaid
+flowchart LR
+   A[/production/latest] --> D[SimulationController.sync_from_microservice]
+   B[/demand/hourly] --> D
+   C[/plants/latest opcional] --> D
+   D --> E[Seleccion ultimo punto efectivo]
+   E --> F[Fallback si curva invalida]
+   F --> G[Calcular KPI]
+   G --> H[State actualizado]
+   H --> I[UI y Charts]
+```
+
 Entradas:
 
 - Snapshot de produccion mas reciente desde microservicio.
@@ -109,6 +145,42 @@ Salidas:
 - Payload para UI y charts.
 
 ### Proceso B: cambio AUTOMATIC -> MANUAL
+
+Diagrama de caja (vista rapida):
+
+```text
++-----------------------------------------------------------------------------------+
+| Proceso B: Transicion AUTOMATIC -> MANUAL                                         |
+|-----------------------------------------------------------------------------------|
+| Entradas                                                                          |
+| - Estado automatico previo                                                        |
+| - Catalogo base de centrales                                                      |
+| - Snapshot de plantas en vivo (si util y fresco)                                 |
+|                                                                                   |
+| Reglas / Transformaciones                                                         |
+| - Baseline MANUAL live-first                                                       |
+| - Fallback a estado agregado automatico o JSON base                               |
+| - Neutralizacion hidrica inicial (100%)                                           |
+| - Carry-over import/export                                                         |
+|                                                                                   |
+| Salidas                                                                           |
+| - State MANUAL coherente para what-if                                             |
+| - Diagnosticos de transicion (deltas y causa)                                     |
++-----------------------------------------------------------------------------------+
+```
+
+Diagrama de flujo:
+
+```mermaid
+flowchart LR
+   A[Estado AUTOMATIC previo] --> B[Build manual baseline]
+   C[Snapshot live plantas] --> B
+   D[Catalogo JSON base] --> B
+   B --> E[Neutralizar disponibilidad hidrica]
+   E --> F[Copiar import/export del pre_state]
+   F --> G[Recalcular KPI MANUAL]
+   G --> H[Publicar state_updated + diagnosticos]
+```
 
 Entradas:
 
@@ -130,6 +202,41 @@ Salidas:
 
 ### Proceso C: edicion manual operativa
 
+Diagrama de caja (vista rapida):
+
+```text
++-----------------------------------------------------------------------------------+
+| Proceso C: Edicion manual operativa                                               |
+|-----------------------------------------------------------------------------------|
+| Entradas                                                                          |
+| - Demanda (delta %)                                                               |
+| - Central seleccionada: estado/disponible/disp. hidrica                           |
+| - Sequia global                                                                    |
+| - Importacion/exportacion                                                          |
+|                                                                                   |
+| Reglas / Transformaciones                                                         |
+| - Agregacion por planta y tecnologia                                               |
+| - Modelo hidrico simplificado en HYDRO                                            |
+| - Recalculo inmediato de KPI                                                       |
+|                                                                                   |
+| Salidas                                                                           |
+| - Nuevo SimulationState                                                            |
+| - Refresco sincronizado de KPI, mapa y graficas                                   |
++-----------------------------------------------------------------------------------+
+```
+
+Diagrama de flujo:
+
+```mermaid
+flowchart LR
+   A[Interaccion usuario en GUI] --> B[MainWindow handlers]
+   B --> C[apply_manual_demand_delta / apply_manual_central_catalog / apply_manual_interconnection]
+   C --> D[aggregate_generation_by_type]
+   D --> E[BalanceCalculator + RiskAssessor]
+   E --> F[State actualizado]
+   F --> G[Mapa + KPI + Charts]
+```
+
 Entradas:
 
 - Ediciones del usuario: demanda, disponibilidad por central, estado de central,
@@ -145,6 +252,24 @@ Salidas:
 
 - Nuevo estado operativo.
 - Refresco simultaneo de KPI, mapa y panel de graficas.
+
+### Tabla consolidada: entradas, reglas y salidas por proceso
+
+| Proceso | Entradas principales | Reglas de negocio | Salidas principales | Fallback/Error |
+|---|---|---|---|---|
+| A. Sincronizacion automatica | production/latest, demand/hourly, plants/latest | Seleccion de ultimo punto util, fallback a snapshot agregado, recalc KPI | State AUTOMATIC + payload UI | Si falla API, se conserva ultimo state valido |
+| B. Cambio a MANUAL | pre_state, catalogo base, snapshot live | live-first baseline, fallback jerarquico, neutralizacion hidrica, carry-over import/export | State MANUAL + diagnosticos | Si no hay live ni automatico usable, usar JSON base |
+| C. Edicion manual | demanda, catalogo editado, sequia, import/export | agregacion por tipo/planta, fisica hidro simplificada, recalc KPI inmediato | State nuevo + refresco visual | Fuera de MANUAL, no aplica cambios |
+
+### Tabla de metodos criticos del simulador
+
+| Metodo critico | Entradas | Reglas principales | Salida |
+|---|---|---|---|
+| sync_from_microservice | production/latest, demand/hourly, plants/latest | Seleccion de ultimo punto efectivo, fallback a snapshot agregado, recalc KPI | State AUTOMATIC actualizado |
+| switch_mode | modo objetivo | Cambia modo; si vuelve a AUTOMATIC dispara sync | State con modo actualizado |
+| apply_manual_central_catalog | catalogo centrales, sequia global, import/export opcionales | Agrega por tipo, aplica modelo hidro, preserva/copia interconexion, recalc KPI | State MANUAL recalculado |
+| apply_manual_interconnection | import_mw, export_mw | Actualiza intercambio neto, recalc KPI inmediato | State MANUAL con oferta neta ajustada |
+| build_manual_entry_catalog | pre_state, base_centrales, live_plants | Prioridad live-first, fallback agregado/JSON, diagnostico de causa | Catalogo baseline + fuente + diagnostico |
 
 ---
 
@@ -184,6 +309,23 @@ Salidas:
 
 ## 5. Modelo matematico y ecuaciones
 
+## 5.0 Definicion de variables (notacion)
+
+- $D$: demanda total del sistema (MW).
+- $S$: oferta total neta del sistema (MW).
+- $B$: balance neto del sistema (MW).
+- $RM$: margen de reserva porcentual (%).
+- $H$: generacion hidro agregada (MW).
+- $T$: generacion termica agregada (MW).
+- $R$: generacion renovable no hidro (MW), donde $R = WIND + SOLAR$.
+- $I$: importacion de energia (MW).
+- $E$: exportacion de energia (MW).
+- $P_{hidro}$: potencia efectiva hidro de una central (MW).
+- $P_{disp}$: potencia hidro disponible declarada para una central (MW).
+- $F_{hidraulico}$: factor hidraulico efectivo (adimensional, entre 0 y 1).
+- $DispHidrica$: disponibilidad hidrica por central (%).
+- $SequiaGlobal$: penalizacion hidrica global (adimensional, entre 0 y 1).
+
 ## 5.1 Oferta total neta
 
 La oferta neta del sistema se calcula como:
@@ -212,6 +354,12 @@ $$
 B = S - D
 $$
 
+Donde:
+
+- $B$: balance neto del sistema.
+- $S$: oferta total neta.
+- $D$: demanda total del sistema.
+
 - $B > 0$: superavit.
 - $B < 0$: deficit.
 
@@ -220,6 +368,12 @@ $$
 $$
 RM = \frac{S - D}{D} \times 100
 $$
+
+Donde:
+
+- $RM$: margen de reserva en porcentaje.
+- $S$: oferta total neta.
+- $D$: demanda total del sistema.
 
 Si $D \le 0$, el sistema devuelve 0 por estabilidad numerica.
 
@@ -254,6 +408,101 @@ Interpretacion clave:
 
 - Disp. hidrica es un factor operativo, no una medicion fisica directa del embalse.
 - Sequia global penaliza transversalmente todas las centrales hidro.
+
+## 5.6 Ejemplos numericos operativos
+
+### Ejemplo 1: escenario base con reserva positiva
+
+Datos de entrada:
+
+- $H = 2,900$ MW
+- $T = 1,200$ MW
+- $R = 180$ MW
+- $I = 120$ MW
+- $E = 20$ MW
+- $D = 4,000$ MW
+
+Calculo:
+
+$$
+S = 2900 + 1200 + 180 + 120 - 20 = 4380\ MW
+$$
+
+$$
+B = S - D = 4380 - 4000 = 380\ MW
+$$
+
+$$
+RM = \frac{4380 - 4000}{4000} \times 100 = 9.5\%
+$$
+
+Interpretacion:
+
+- Hay superavit ($B > 0$), pero reserva moderada (9.5%), con riesgo operacional entre ALERT/CRITICAL segun umbral configurado.
+
+### Ejemplo 2: escenario de estres con deficit
+
+Datos de entrada:
+
+- $H = 2,100$ MW
+- $T = 850$ MW
+- $R = 140$ MW
+- $I = 40$ MW
+- $E = 90$ MW
+- $D = 3,600$ MW
+
+Calculo:
+
+$$
+S = 2100 + 850 + 140 + 40 - 90 = 3040\ MW
+$$
+
+$$
+B = 3040 - 3600 = -560\ MW
+$$
+
+$$
+RM = \frac{3040 - 3600}{3600} \times 100 = -15.56\%
+$$
+
+Interpretacion:
+
+- Hay deficit severo ($B < 0$) y margen negativo, por lo que el riesgo esperado es FAILURE.
+
+### Ejemplo 3: continuidad de import/export al pasar a MANUAL
+
+Estado pre-switch (AUTOMATIC):
+
+- $H = 2,950$ MW, $T = 1,320$ MW, $R = 20$ MW
+- $I = 150$ MW, $E = 60$ MW, $D = 4,100$ MW
+
+Oferta pre-switch:
+
+$$
+S_{pre} = 2950 + 1320 + 20 + 150 - 60 = 4380\ MW
+$$
+
+Caso sin carry-over (hipotetico incorrecto, $I=E=0$):
+
+$$
+S_{sin\ carry} = 2950 + 1320 + 20 + 0 - 0 = 4290\ MW
+$$
+
+Perdida artificial:
+
+$$
+\Delta S = 4290 - 4380 = -90\ MW
+$$
+
+Caso implementado (con carry-over):
+
+$$
+S_{con\ carry} = 2950 + 1320 + 20 + 150 - 60 = 4380\ MW
+$$
+
+Interpretacion:
+
+- Preservar import/export evita un salto artificial de 90 MW en oferta al pasar a MANUAL.
 
 ---
 
@@ -351,9 +600,48 @@ Transformar HTML dinamico de CENACE en datos estructurados y consultables por AP
    -> [Logs de scraping]
 ```
 
+Diagrama de flujo de pipeline:
+
+```mermaid
+flowchart LR
+    A[APScheduler] --> B[run_scraper]
+    B --> C[CENACEScraperSync]
+    C --> D[Playwright fetch HTML]
+    D --> E[HTML Parser]
+    E --> F[DataCleaner]
+    F --> G[ProductionRepository]
+    F --> H[PlantRepository]
+    F --> I[HourlyCurveRepository]
+    G --> J[(SQLite)]
+    H --> J
+    I --> J
+    B --> K[ScrapeLogRepository]
+    K --> J
+```
+
 ## 7.3 Cajas funcionales del microservicio
 
 ### Caja 1: Scraper Playwright
+
+Diagrama de caja:
+
+```text
++-----------------------------------------------------------------------------------+
+| Caja 1: Scraper Playwright                                                        |
+|-----------------------------------------------------------------------------------|
+| Entradas                                                                          |
+| - URL CENACE                                                                      |
+| - Timeout, wait_selector, headless                                                |
+|                                                                                   |
+| Reglas                                                                            |
+| - Abrir Chromium real                                                             |
+| - Esperar selector de disponibilidad de datos                                     |
+| - Reintentos con backoff exponencial                                              |
+|                                                                                   |
+| Salidas                                                                           |
+| - HTML final renderizado                                                           |
++-----------------------------------------------------------------------------------+
+```
 
 Entrada:
 
@@ -373,6 +661,25 @@ Salida:
 
 ### Caja 2: Parser
 
+Diagrama de caja:
+
+```text
++-----------------------------------------------------------------------------------+
+| Caja 2: Parser HTML                                                               |
+|-----------------------------------------------------------------------------------|
+| Entradas                                                                          |
+| - HTML renderizado                                                                 |
+|                                                                                   |
+| Reglas                                                                            |
+| - Extraer resumen energetico                                                       |
+| - Extraer detalle por planta                                                       |
+| - Extraer curva horaria                                                            |
+|                                                                                   |
+| Salidas                                                                           |
+| - Datos crudos: production + plants + hourly_curve                                |
++-----------------------------------------------------------------------------------+
+```
+
 Entrada:
 
 - HTML renderizado.
@@ -390,6 +697,25 @@ Salida:
 
 ### Caja 3: Limpieza y validacion
 
+Diagrama de caja:
+
+```text
++-----------------------------------------------------------------------------------+
+| Caja 3: DataCleaner                                                               |
+|-----------------------------------------------------------------------------------|
+| Entradas                                                                          |
+| - Datos crudos parseados                                                           |
+|                                                                                   |
+| Reglas                                                                            |
+| - Normalizar tipos y redondeo                                                      |
+| - Validar rangos y coherencia                                                      |
+| - Completar defaults                                                               |
+|                                                                                   |
+| Salidas                                                                           |
+| - Payload limpio listo para persistencia                                           |
++-----------------------------------------------------------------------------------+
+```
+
 Entrada:
 
 - Datos crudos parseados.
@@ -405,6 +731,27 @@ Salida:
 - Payload limpio y consistente para persistencia.
 
 ### Caja 4: Persistencia
+
+Diagrama de caja:
+
+```text
++-----------------------------------------------------------------------------------+
+| Caja 4: Persistencia en SQLite                                                    |
+|-----------------------------------------------------------------------------------|
+| Entradas                                                                          |
+| - Snapshot de produccion                                                           |
+| - Registros de plantas                                                             |
+| - Curva horaria                                                                    |
+|                                                                                   |
+| Reglas                                                                            |
+| - Insert batch por repositorio                                                     |
+| - Registrar log de exito/error                                                     |
+|                                                                                   |
+| Salidas                                                                           |
+| - Tablas historicas actualizadas                                                   |
+| - Metricas de ejecucion                                                            |
++-----------------------------------------------------------------------------------+
+```
 
 Entrada:
 
@@ -423,6 +770,24 @@ Salida:
 - Metricas de salud y exito disponibles.
 
 ### Caja 5: API FastAPI
+
+Diagrama de caja:
+
+```text
++-----------------------------------------------------------------------------------+
+| Caja 5: API FastAPI                                                               |
+|-----------------------------------------------------------------------------------|
+| Entradas                                                                          |
+| - Consultas HTTP de simulador/operador                                             |
+|                                                                                   |
+| Reglas                                                                            |
+| - Leer ultimo snapshot o historico                                                 |
+| - Serializar respuesta con schemas Pydantic                                        |
+|                                                                                   |
+| Salidas                                                                           |
+| - JSON de endpoints /production, /plants, /demand, /health, /logs                 |
++-----------------------------------------------------------------------------------+
+```
 
 Entrada:
 
@@ -445,6 +810,16 @@ Salida:
 - Plantas latest.
 
 Estos endpoints son la interfaz de contrato principal con el simulador.
+
+### Tabla operativa de endpoints y uso en simulador
+
+| Endpoint | Proposito | Entrada | Campos de salida criticos | Uso en simulador | Fallback |
+|---|---|---|---|---|---|
+| GET /api/v1/health | Salud del servicio | Ninguna | status, last_scrape, success_rate | Verificacion pre-operacion | Si falla, trabajar en MANUAL con ultimo state |
+| GET /api/v1/production/latest | Snapshot agregado mas reciente | Ninguna | total_mwh, hydro_mwh, thermal_mwh, renewable_mwh, import_mwh, export_mwh, timestamp | Fallback de valores cuando curva horaria llega con ceros | Mantener ultimo state valido |
+| GET /api/v1/demand/hourly | Curva horaria de demanda y generacion | date opcional | demand_mw, hydro_mw, thermal_mw, renewable_mw, import_mw, export_mw | Fuente primaria de sync AUTOMATIC y timeline charts | Si no hay curva usable, usar production/latest |
+| GET /api/v1/plants/latest | Detalle por planta del ultimo timestamp | Ninguna | plant_id, plant_name, plant_type, mwh | Baseline MANUAL live-first y overlay por planta | Si falla, continuar con ultimo snapshot de plantas |
+| GET /api/v1/logs | Diagnostico de scraping | limit opcional | success, error_message, duration_seconds | Soporte de troubleshooting operativo | No bloquea simulacion |
 
 ---
 
