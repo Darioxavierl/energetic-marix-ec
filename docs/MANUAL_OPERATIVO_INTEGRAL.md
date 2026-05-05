@@ -117,9 +117,9 @@ Diagrama de flujo:
 
 ```mermaid
 flowchart LR
-   A[/production/latest] --> D[SimulationController.sync_from_microservice]
-   B[/demand/hourly] --> D
-   C[/plants/latest opcional] --> D
+   A["/production/latest"] --> D["SimulationController.sync_from_microservice"]
+   B["/demand/hourly"] --> D
+   C["/plants/latest (opcional)"] --> D
    D --> E[Seleccion ultimo punto efectivo]
    E --> F[Fallback si curva invalida]
    F --> G[Calcular KPI]
