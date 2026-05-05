@@ -1,4 +1,9 @@
-﻿# Matriz Energetica Ecuador
+﻿# Matriz Energetica Ecuador - Regulacion de las Telecomunicaciones
+## Universidad de Cuenca  
+## Facultad de Ingenieria  
+## Grupo 1  
+## Integrantes: David Alejandro Montaño Bravo, Sebastián Josué Pesántez Jiménez, Dario Xavier Portilla Loja.
+
 
 Simulador de la matriz energetica del Ecuador con interfaz grafica (PyQt6) y microservicio de scraping de CENACE (FastAPI + Playwright).
 
@@ -83,10 +88,3 @@ python -c "import json, urllib.request; print(json.load(urllib.request.urlopen('
 
 Si devuelve `healthy` o `degraded`, el servicio esta respondiendo.
 
-## Autores
-
-Matriz Energetica Ecuador - Regulacion de las Telecomunicaciones  
-Universidad de Cuenca  
-Facultad de Ingenieria  
-Grupo 1  
-Integrantes: David Alejandro Montaño Bravo, Sebastián Josué Pesántez Jiménez, Dario Xavier Portilla Loja.
