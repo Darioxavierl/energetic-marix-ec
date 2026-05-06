@@ -117,6 +117,28 @@ class TestCENACEHTMLParser:
         """Tests con HTML vacío"""
         data = parser.parse_production_summary("<html></html>")
         assert data is None
+
+    def test_parse_demand_summary_from_second_tab(self, parser):
+        html = """
+        <html>
+            <body>
+                <div class="tab-content active">
+                    <div class="resumen-box total"><div>PRODUCCIÓN TOTAL</div><div>90 000</div></div>
+                </div>
+                <div class="tab-content">
+                    <div class="resumen-box total"><div>DEMANDA TOTAL</div><div>4 328</div></div>
+                    <div class="resumen-box cnel"><div>CNEL</div><div>3 138</div></div>
+                    <div class="resumen-box empresas"><div>EMPRESAS</div><div>1 190</div></div>
+                </div>
+            </body>
+        </html>
+        """
+
+        data = parser.parse_demand_summary(html)
+        assert data is not None
+        assert data["demand_total_mw"] == 4328.0
+        assert data["demand_cnel_mw"] == 3138.0
+        assert data["demand_empresas_mw"] == 1190.0
     
     def test_validate_data_valid(self, parser):
         """Tests para validación de datos válidos"""

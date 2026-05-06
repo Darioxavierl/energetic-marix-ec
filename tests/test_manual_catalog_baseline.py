@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 
 from src.application.manual_catalog_baseline import (
+    calculate_manual_residual_by_type,
     build_manual_catalog_from_automatic_state_with_diagnostics,
     build_manual_catalog_from_live,
     build_manual_catalog_from_live_with_diagnostics,
@@ -80,9 +81,9 @@ def test_build_manual_catalog_from_live_sets_online_for_positive_mapped_generati
     by_id = {str(item["id"]): item for item in result}
 
     assert by_id["coca_codo_1"]["status"] == "ONLINE"
-    assert by_id["coca_codo_1"]["available_capacity_mw"] == 1200.0
+    assert round(by_id["coca_codo_1"]["available_capacity_mw"], 2) == round(1200.0 / 24.0, 2)
     assert by_id["thermal_a"]["status"] == "ONLINE"
-    assert by_id["thermal_a"]["available_capacity_mw"] == 50.0
+    assert round(by_id["thermal_a"]["available_capacity_mw"], 2) == round(50.0 / 24.0, 2)
 
 
 def test_build_manual_catalog_from_live_preserves_status_when_no_generation_match():
@@ -146,7 +147,9 @@ def test_build_manual_catalog_from_live_with_diagnostics_maps_renewable_to_wind_
 
     baseline, diagnostics = build_manual_catalog_from_live_with_diagnostics(base, live)
 
-    assert diagnostics["live_by_type_mw"]["RENEWABLE"] == 75.0
+    assert diagnostics["energy_window_hours"] == 24.0
+    assert diagnostics["live_by_type_mwh"]["RENEWABLE"] == 75.0
+    assert round(diagnostics["live_by_type_mw"]["RENEWABLE"], 4) == round(75.0 / 24.0, 4)
     assert diagnostics["unmatched_pool_by_type"] == {}
     by_id = {str(item["id"]): item for item in baseline}
     assert by_id["w1"]["available_capacity_mw"] > 0.0
@@ -177,3 +180,29 @@ def test_build_manual_catalog_from_automatic_state_reports_unallocated_thermal_c
     assert diagnostics["target_by_type_mw"]["THERMAL"] == 500.0
     assert diagnostics["mapped_by_type_mw"]["THERMAL"] == 100.0
     assert diagnostics["unallocated_by_type_mw"]["THERMAL"] == 400.0
+
+
+def test_calculate_manual_residual_by_type_fills_gap_without_exceeding_catalog_capacity():
+    base = [
+        {
+            "id": "t1",
+            "name": "Termo Uno",
+            "type": "THERMAL",
+            "installed_capacity_mw": 100.0,
+            "available_capacity_mw": 100.0,
+            "status": "ONLINE",
+        }
+    ]
+    automatic_state = SimulationState(
+        hydro_mw=0.0,
+        thermal_mw=500.0,
+        renewable_mw=0.0,
+        metrics=SimulationMetrics(total_supply_mw=500.0),
+    )
+
+    diagnostics = calculate_manual_residual_by_type(automatic_state, base, global_drought_factor=0.0)
+
+    assert diagnostics["catalog_by_type_mw"]["THERMAL"] == 100.0
+    assert diagnostics["automatic_by_type_mw"]["THERMAL"] == 500.0
+    assert diagnostics["residual_by_type_mw"]["THERMAL"] == 400.0
+    assert diagnostics["residual_total_mw"] == 400.0

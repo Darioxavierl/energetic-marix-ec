@@ -51,6 +51,15 @@ class HourlyCurveResponse(BaseModel):
     reserve_margin: Optional[float] = None
     risk_level: Optional[str] = None
 
+
+class DemandLatestResponse(BaseModel):
+    """Demanda nacional consolidada (tab de demanda en tiempo real)."""
+
+    timestamp: datetime = Field(..., description="Timestamp del dato CENACE")
+    demand_total_mw: float = Field(..., description="Demanda total en MW")
+    demand_cnel_mw: float = Field(default=0, description="Demanda CNEL en MW")
+    demand_empresas_mw: float = Field(default=0, description="Demanda empresas en MW")
+
 class HealthResponse(BaseModel):
     """Estado de salud del servicio"""
     status: str = Field(..., description="'healthy' o 'degraded'")

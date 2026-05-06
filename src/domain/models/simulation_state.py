@@ -26,12 +26,26 @@ class SimulationMetrics:
 class SimulationState:
     """Current working state shown in the simulator."""
 
-    schema_version: int = 2
+    schema_version: int = 4
     mode: DataSourceMode = DataSourceMode.AUTOMATIC
     demand_mw: float = 0.0
     hydro_mw: float = 0.0
     thermal_mw: float = 0.0
     renewable_mw: float = 0.0
+    residual_hydro_mw: float = 0.0
+    residual_thermal_mw: float = 0.0
+    residual_renewable_mw: float = 0.0
+    official_total_mwh: float = 0.0
+    official_hydro_mwh: float = 0.0
+    official_thermal_mwh: float = 0.0
+    official_renewable_mwh: float = 0.0
+    official_import_mwh: float = 0.0
+    official_export_mwh: float = 0.0
+    demand_source: str = "unknown"
+    supply_source: str = "unknown"
+    manual_baseline_source: str = ""
+    manual_residual_reason: str = ""
+    operational_window_hours: float = 1.0
     global_drought_factor: float = 0.0
     import_mw: float = 0.0
     export_mw: float = 0.0
@@ -49,6 +63,20 @@ class SimulationState:
             "hydro_mw": self.hydro_mw,
             "thermal_mw": self.thermal_mw,
             "renewable_mw": self.renewable_mw,
+            "residual_hydro_mw": self.residual_hydro_mw,
+            "residual_thermal_mw": self.residual_thermal_mw,
+            "residual_renewable_mw": self.residual_renewable_mw,
+            "official_total_mwh": self.official_total_mwh,
+            "official_hydro_mwh": self.official_hydro_mwh,
+            "official_thermal_mwh": self.official_thermal_mwh,
+            "official_renewable_mwh": self.official_renewable_mwh,
+            "official_import_mwh": self.official_import_mwh,
+            "official_export_mwh": self.official_export_mwh,
+            "demand_source": self.demand_source,
+            "supply_source": self.supply_source,
+            "manual_baseline_source": self.manual_baseline_source,
+            "manual_residual_reason": self.manual_residual_reason,
+            "operational_window_hours": self.operational_window_hours,
             "global_drought_factor": self.global_drought_factor,
             "import_mw": self.import_mw,
             "export_mw": self.export_mw,
@@ -91,6 +119,20 @@ class SimulationState:
             hydro_mw=float(payload.get("hydro_mw", 0.0)),
             thermal_mw=float(payload.get("thermal_mw", 0.0)),
             renewable_mw=float(payload.get("renewable_mw", 0.0)),
+            residual_hydro_mw=float(payload.get("residual_hydro_mw", 0.0)),
+            residual_thermal_mw=float(payload.get("residual_thermal_mw", 0.0)),
+            residual_renewable_mw=float(payload.get("residual_renewable_mw", 0.0)),
+            official_total_mwh=float(payload.get("official_total_mwh", payload.get("demand_mw", 0.0))),
+            official_hydro_mwh=float(payload.get("official_hydro_mwh", payload.get("hydro_mw", 0.0))),
+            official_thermal_mwh=float(payload.get("official_thermal_mwh", payload.get("thermal_mw", 0.0))),
+            official_renewable_mwh=float(payload.get("official_renewable_mwh", payload.get("renewable_mw", 0.0))),
+            official_import_mwh=float(payload.get("official_import_mwh", payload.get("import_mw", 0.0))),
+            official_export_mwh=float(payload.get("official_export_mwh", payload.get("export_mw", 0.0))),
+            demand_source=str(payload.get("demand_source", "unknown")),
+            supply_source=str(payload.get("supply_source", "unknown")),
+            manual_baseline_source=str(payload.get("manual_baseline_source", "")),
+            manual_residual_reason=str(payload.get("manual_residual_reason", "")),
+            operational_window_hours=float(payload.get("operational_window_hours", 1.0) or 1.0),
             global_drought_factor=float(payload.get("global_drought_factor", 0.0)),
             import_mw=float(payload.get("import_mw", 0.0)),
             export_mw=float(payload.get("export_mw", 0.0)),

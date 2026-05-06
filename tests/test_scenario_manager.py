@@ -9,7 +9,13 @@ from src.domain.models.simulation_state import DataSourceMode, SimulationState
 
 def test_save_and_load_scenario(tmp_path: Path):
     manager = ScenarioManager(tmp_path)
-    state = SimulationState(mode=DataSourceMode.MANUAL, demand_mw=3000.0, hydro_mw=2100.0)
+    state = SimulationState(
+        mode=DataSourceMode.MANUAL,
+        demand_mw=3000.0,
+        hydro_mw=2100.0,
+        residual_hydro_mw=150.0,
+        manual_baseline_source="snapshot live",
+    )
 
     manager.save("escenario prueba", state)
     loaded = manager.load("escenario_prueba")
@@ -17,6 +23,8 @@ def test_save_and_load_scenario(tmp_path: Path):
     assert loaded.mode == DataSourceMode.MANUAL
     assert loaded.demand_mw == 3000.0
     assert loaded.hydro_mw == 2100.0
+    assert loaded.residual_hydro_mw == 150.0
+    assert loaded.manual_baseline_source == "snapshot live"
 
 
 def test_duplicate_and_delete_scenario(tmp_path: Path):

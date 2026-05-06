@@ -54,6 +54,7 @@ def map_live_generation_to_centrales(
     centrales: list[dict],
     live_plants: list[dict],
     min_match_score: float = 0.5,
+    energy_window_hours: float = 24.0,
 ) -> dict[str, float]:
     """Map live plant generation to static centrales; distribute unmatched by type."""
 
@@ -61,6 +62,7 @@ def map_live_generation_to_centrales(
         centrales=centrales,
         live_plants=live_plants,
         min_match_score=min_match_score,
+        energy_window_hours=energy_window_hours,
     )
     return mapped
 
@@ -69,6 +71,7 @@ def map_live_generation_to_centrales_with_diagnostics(
     centrales: list[dict],
     live_plants: list[dict],
     min_match_score: float = 0.5,
+    energy_window_hours: float = 24.0,
 ) -> tuple[dict[str, float], dict]:
     """Map live generation and return diagnostics for matching/distribution quality."""
 
@@ -79,22 +82,27 @@ def map_live_generation_to_centrales_with_diagnostics(
     }
 
     unmatched_pool_by_type: dict[str, float] = defaultdict(float)
+    unmatched_pool_by_type_energy_mwh: dict[str, float] = defaultdict(float)
     used_ids: set[str] = set()
     direct_matches = 0
     distributed_matches = 0
+    safe_window_hours = max(1e-6, float(energy_window_hours or 24.0))
 
     for live in live_plants:
         live_name = str(live.get("plant_name", ""))
         live_type = str(live.get("plant_type", "")).upper()
-        live_mw = float(live.get("mwh", 0.0) or 0.0)
-        if live_mw <= 0.0:
+        live_mwh = float(live.get("mwh", 0.0) or 0.0)
+        if live_mwh <= 0.0:
             continue
+        # CENACE per-plant detail is energy (MWh); convert to average MW-equivalent.
+        live_mw = live_mwh / safe_window_hours
 
         candidates = [
             c for c in centrales if str(c.get("type", "")).upper() == live_type and str(c.get("id")) not in used_ids
         ]
         if not candidates:
             unmatched_pool_by_type[live_type] += live_mw
+            unmatched_pool_by_type_energy_mwh[live_type] += live_mwh
             continue
 
         best_candidate = None
@@ -112,6 +120,7 @@ def map_live_generation_to_centrales_with_diagnostics(
             direct_matches += 1
         else:
             unmatched_pool_by_type[live_type] += live_mw
+            unmatched_pool_by_type_energy_mwh[live_type] += live_mwh
 
     # Map generic live renewable type into WIND/SOLAR local catalog by installed capacity.
     renewable_pool = float(unmatched_pool_by_type.pop("RENEWABLE", 0.0) or 0.0)
@@ -144,6 +153,10 @@ def map_live_generation_to_centrales_with_diagnostics(
     diagnostics = {
         "direct_matches": direct_matches,
         "distributed_matches": distributed_matches,
+        "energy_window_hours": safe_window_hours,
+        "unmatched_pool_by_type_energy_mwh": {
+            k: float(v) for k, v in unmatched_pool_by_type_energy_mwh.items() if float(v) > 0.0
+        },
         "unmatched_pool_by_type": {k: float(v) for k, v in unmatched_pool_by_type.items() if float(v) > 0.0},
     }
     return generation_by_id, diagnostics

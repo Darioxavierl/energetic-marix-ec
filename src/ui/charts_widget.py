@@ -101,6 +101,8 @@ class ChartsWidget(QWebEngineView):
                 <div class=\"kpi\"><div class=\"kpi-label\">Oferta</div><div id=\"kpiSupply\" class=\"kpi-value\">0 MW</div></div>
                 <div class=\"kpi\"><div class=\"kpi-label\">Balance</div><div id=\"kpiBalance\" class=\"kpi-value\">0 MW</div></div>
             </div>
+                        <div class=\"meta\" id=\"unitsNote\">Operativo en MW; reporte oficial CENACE en MWh</div>
+                        <div class=\"meta\" id=\"sourcesMeta\">Fuentes: demanda=unknown, oferta=unknown</div>
             <div class=\"meta\" id=\"timelineSource\">Fuente timeline: session_history</div>
         </div>
 
@@ -190,6 +192,12 @@ class ChartsWidget(QWebEngineView):
             document.getElementById('kpiDemand').innerText = demand.toFixed(1) + ' MW';
             document.getElementById('kpiSupply').innerText = supply.toFixed(1) + ' MW';
             document.getElementById('kpiBalance').innerText = balance.toFixed(1) + ' MW';
+                        document.getElementById('unitsNote').innerText = String(payload.units_note || 'Operativo en MW; reporte oficial CENACE en MWh');
+                        const opWindow = Number(payload.operational_window_hours || 1);
+                        const opWindowText = opWindow > 1 ? ' (eq ' + opWindow.toFixed(0) + 'h)' : '';
+                        document.getElementById('sourcesMeta').innerText =
+                            'Fuentes: demanda=' + String(payload.demand_source || 'unknown') +
+                            ', oferta=' + String(payload.supply_source || 'unknown') + opWindowText;
             document.getElementById('timelineSource').innerText = 'Fuente timeline: ' + String(payload.timeline_source || 'session_history');
 
             const badge = document.getElementById('riskBadge');

@@ -8,6 +8,7 @@ from src.scraper.cenace_scraper import CENACEScraperSync
 from src.database.db_session import SessionLocal
 from src.database.repositories import (
     ProductionRepository,
+    DemandRepository,
     PlantRepository,
     HourlyCurveRepository,
     ScrapeLogRepository
@@ -50,6 +51,19 @@ def run_scraper():
             'is_validated': True
         })
 
+        # 1.1 Guardar Snapshot de Demanda (tab demanda tiempo real)
+        demand_inserted = 0
+        demand_data = production_data.get('demand_summary', {}) or {}
+        if demand_data.get('demand_total_mw') is not None:
+            demand_repo = DemandRepository(db)
+            demand_repo.create({
+                'timestamp': demand_data.get('timestamp', timestamp),
+                'demand_total_mw': demand_data.get('demand_total_mw', 0),
+                'demand_cnel_mw': demand_data.get('demand_cnel_mw', 0),
+                'demand_empresas_mw': demand_data.get('demand_empresas_mw', 0),
+            })
+            demand_inserted = 1
+
         # 2. Guardar Detalle de Plantas
         plants_data = production_data.get('plants', [])
         if plants_data:
@@ -91,7 +105,7 @@ def run_scraper():
         duration = time.time() - start_time
         ScrapeLogRepository(db).log_success(
             duration=duration, 
-            inserted=1 + len(plants_data) + len(hourly_data), 
+            inserted=1 + demand_inserted + len(plants_data) + len(hourly_data), 
             updated=0
         )
         logger.info(f"✓ Scraping y guardado completado en {duration:.2f}s")

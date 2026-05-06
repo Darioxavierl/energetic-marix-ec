@@ -28,6 +28,11 @@ class CENACEClient:
 
         return self._get_json("/api/v1/production/latest")
 
+    def get_latest_demand(self) -> dict:
+        """Return latest consolidated demand payload from demand real-time tab."""
+
+        return self._get_json("/api/v1/demand/latest")
+
     def get_latest_plants(self) -> list[dict]:
         """Return latest plant generation list."""
 

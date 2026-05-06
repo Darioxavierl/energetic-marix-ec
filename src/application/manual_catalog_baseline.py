@@ -7,8 +7,10 @@ from datetime import datetime
 from collections import defaultdict
 
 from config.settings import HYDRO_DEFAULT_RESERVOIR_LEVEL_PCT
+from config.settings import MANUAL_LIVE_ENERGY_WINDOW_HOURS
 from src.application.plant_generation_mapper import map_live_generation_to_centrales_with_diagnostics
 from src.domain.models.simulation_state import SimulationState
+from src.domain.simulation.generation_aggregator import aggregate_generation_by_type
 
 
 def normalize_hydro_contract(centrales: list[dict]) -> list[dict]:
@@ -208,16 +210,20 @@ def build_manual_catalog_from_live_with_diagnostics(
     generation_by_id, mapper_diagnostics = map_live_generation_to_centrales_with_diagnostics(
         baseline,
         live_plants,
+        energy_window_hours=MANUAL_LIVE_ENERGY_WINDOW_HOURS,
     )
     status_changes: list[dict] = []
     mapped_by_type_mw: dict[str, float] = defaultdict(float)
     live_by_type_mw: dict[str, float] = defaultdict(float)
+    live_by_type_mwh: dict[str, float] = defaultdict(float)
+    safe_window_hours = max(1e-6, float(MANUAL_LIVE_ENERGY_WINDOW_HOURS))
 
     for live in live_plants:
         live_type = str(live.get("plant_type", "")).upper()
-        live_mw = max(0.0, float(live.get("mwh", 0.0) or 0.0))
-        if live_mw > 0.0:
-            live_by_type_mw[live_type] += live_mw
+        live_mwh = max(0.0, float(live.get("mwh", 0.0) or 0.0))
+        if live_mwh > 0.0:
+            live_by_type_mwh[live_type] += live_mwh
+            live_by_type_mw[live_type] += (live_mwh / safe_window_hours)
 
     for central in baseline:
         cid = str(central.get("id", ""))
@@ -239,11 +245,50 @@ def build_manual_catalog_from_live_with_diagnostics(
         mapped_by_type_mw[plant_type] += float(central["available_capacity_mw"])
 
     diagnostics = {
+        "energy_window_hours": safe_window_hours,
+        "live_by_type_mwh": {k: float(v) for k, v in live_by_type_mwh.items()},
         "live_by_type_mw": {k: float(v) for k, v in live_by_type_mw.items()},
         "mapped_by_type_mw": {k: float(v) for k, v in mapped_by_type_mw.items()},
         "unmatched_pool_by_type": dict(mapper_diagnostics.get("unmatched_pool_by_type", {})),
+        "unmatched_pool_by_type_energy_mwh": dict(
+            mapper_diagnostics.get("unmatched_pool_by_type_energy_mwh", {})
+        ),
         "status_changes": status_changes,
         "direct_matches": int(mapper_diagnostics.get("direct_matches", 0)),
         "distributed_matches": int(mapper_diagnostics.get("distributed_matches", 0)),
     }
     return baseline, diagnostics
+
+
+def calculate_manual_residual_by_type(
+    automatic_state: SimulationState,
+    centrales: list[dict],
+    global_drought_factor: float = 0.0,
+) -> dict:
+    """Calculate positive continuity residual needed after mapping catalog into MANUAL."""
+
+    generation_by_type = aggregate_generation_by_type(
+        centrales=centrales,
+        global_drought_factor=float(global_drought_factor),
+    )
+    catalog_by_type_mw = {
+        "HYDRO": float(generation_by_type.get("HYDRO", 0.0) or 0.0),
+        "THERMAL": float(generation_by_type.get("THERMAL", 0.0) or 0.0),
+        "RENEWABLE": float(generation_by_type.get("WIND", 0.0) or 0.0)
+        + float(generation_by_type.get("SOLAR", 0.0) or 0.0),
+    }
+    automatic_by_type_mw = {
+        "HYDRO": max(0.0, float(automatic_state.hydro_mw or 0.0)),
+        "THERMAL": max(0.0, float(automatic_state.thermal_mw or 0.0)),
+        "RENEWABLE": max(0.0, float(automatic_state.renewable_mw or 0.0)),
+    }
+    residual_by_type_mw = {
+        plant_type: max(0.0, automatic_by_type_mw.get(plant_type, 0.0) - catalog_by_type_mw.get(plant_type, 0.0))
+        for plant_type in ("HYDRO", "THERMAL", "RENEWABLE")
+    }
+    return {
+        "automatic_by_type_mw": automatic_by_type_mw,
+        "catalog_by_type_mw": catalog_by_type_mw,
+        "residual_by_type_mw": residual_by_type_mw,
+        "residual_total_mw": float(sum(residual_by_type_mw.values())),
+    }

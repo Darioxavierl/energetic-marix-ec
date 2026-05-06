@@ -1,7 +1,7 @@
 # Manual Operativo Integral del Sistema
 
-Version: 1.1 (iteracion editorial final)
-Fecha: 2026-05-04
+Version: 1.3 (continuidad MANUAL con residual no catalogado)
+Fecha: 2026-05-05
 Alcance: Simulador desktop de matriz energetica + microservicio CENACE scraper
 Publico objetivo: operadores, analistas tecnicos y evaluadores academicos
 
@@ -92,8 +92,10 @@ flowchart LR
 El estado de trabajo contiene, entre otros campos:
 
 - Modo: AUTOMATIC o MANUAL.
-- Demanda total.
-- Generacion por tecnologia: hidro, termica, renovable.
+- Capa operativa (MW): demanda, generacion por tecnologia e interconexion para KPI y simulacion.
+- Capa oficial de reporte CENACE (MWh): total, hidro, termica, renovable, import y export.
+- Metadatos de trazabilidad: fuente de demanda, fuente de oferta y ventana operativa de equivalencia.
+- Residual no catalogado (MW): ajuste interno por tipo para preservar continuidad al pasar de AUTOMATIC a MANUAL cuando el catalogo no cubre toda la oferta observada.
 - Interconexion: importacion y exportacion.
 - Factor de sequia global.
 - Timestamp de origen y timestamp de ultima edicion manual.
@@ -111,16 +113,19 @@ Diagrama de caja (vista rapida):
 |-----------------------------------------------------------------------------------|
 | Entradas                                                                          |
 | - /production/latest                                                              |
+| - /demand/latest                                                                  |
 | - /demand/hourly                                                                  |
 | - /plants/latest (si disponible)                                                  |
 |                                                                                   |
 | Reglas / Transformaciones                                                         |
-| - Tomar ultimo punto horario efectivo (evitar cola en cero)                      |
-| - Fallback a snapshot agregado si faltan valores horarios                         |
+| - Poblar capa oficial desde /production/latest (MWh)                              |
+| - Tomar ultimo punto horario efectivo para oferta operativa (MW)                  |
+| - Tomar demanda operativa desde /demand/latest (MW)                               |
+| - Fallback jerarquico a curva y luego a equivalente MWh->MW (ventana 24h)         |
 | - Recalcular KPI: oferta, balance, reserva, riesgo                               |
 |                                                                                   |
 | Salidas                                                                           |
-| - SimulationState en modo AUTOMATIC                                               |
+| - SimulationState en modo AUTOMATIC con capas operativa y oficial                 |
 | - Payload para mapa, KPI textual y charts                                         |
 +-----------------------------------------------------------------------------------+
 ```
@@ -130,30 +135,35 @@ Diagrama de flujo:
 ```mermaid
 flowchart LR
    A["/production/latest"] --> D["SimulationController.sync_from_microservice"]
-   B["/demand/hourly"] --> D
-   C["/plants/latest (opcional)"] --> D
-   D --> E[Seleccion ultimo punto efectivo]
-   E --> F[Fallback si curva invalida]
-   F --> G[Calcular KPI]
-   G --> H[State actualizado]
-   H --> I[UI y Charts]
+   B["/demand/latest"] --> D
+   C["/demand/hourly"] --> D
+   E["/plants/latest (opcional)"] --> D
+   D --> F[Poblar capa oficial MWh]
+   F --> G[Resolver capa operativa MW]
+   G --> H[Aplicar fallback y ventana eq]
+   H --> I[Calcular KPI]
+   I --> J[State actualizado]
+   J --> K[UI y Charts]
 ```
 
 Entradas:
 
 - Snapshot de produccion mas reciente desde microservicio.
+- Snapshot de demanda consolidada en tiempo real.
 - Curva horaria de demanda/generacion.
 - Snapshot de plantas (si disponible).
 
 Transformacion:
 
-- Seleccion del ultimo punto horario util (evita colas con ceros).
-- Fallback a snapshot agregado si faltan valores horarios.
+- Capa oficial (MWh) desde /production/latest.
+- Capa operativa de oferta (MW) desde /demand/hourly usando ultimo punto util.
+- Capa operativa de demanda (MW) desde /demand/latest.
+- Fallback jerarquico: curva horaria -> equivalente MWh->MW usando ventana de 24h.
 - Recalculo de KPI.
 
 Salidas:
 
-- Estado actualizado en modo AUTOMATIC.
+- Estado actualizado en modo AUTOMATIC con semantica explicita de unidades.
 - Payload para UI y charts.
 
 ### Proceso B: cambio AUTOMATIC -> MANUAL
@@ -172,6 +182,7 @@ Diagrama de caja (vista rapida):
 | Reglas / Transformaciones                                                         |
 | - Baseline MANUAL live-first                                                       |
 | - Fallback a estado agregado automatico o JSON base                               |
+| - Calculo de residual no catalogado por tipo contra el pre_state AUTOMATIC        |
 | - Neutralizacion hidrica inicial (100%)                                           |
 | - Carry-over import/export                                                         |
 |                                                                                   |
@@ -204,13 +215,14 @@ Transformacion:
 
 - Construccion de baseline MANUAL con prioridad live-first.
 - Fallback a baseline desde estado agregado automatico o JSON base.
+- Calculo de residual positivo por tipo: diferencia entre oferta operativa AUTOMATIC y oferta representable por el catalogo.
 - Neutralizacion hidrica inicial (disponibilidad hidrica a 100 por ciento al entrar).
 - Carry-over de importacion y exportacion para continuidad de oferta.
 
 Salidas:
 
 - Estado MANUAL coherente para iniciar analisis what-if.
-- Diagnosticos de transicion (causas y diferencias).
+- Diagnosticos de transicion (causas, diferencias y residual aplicado).
 
 ### Proceso C: edicion manual operativa
 
@@ -269,19 +281,20 @@ Salidas:
 
 | Proceso | Entradas principales | Reglas de negocio | Salidas principales | Fallback/Error |
 |---|---|---|---|---|
-| A. Sincronizacion automatica | production/latest, demand/hourly, plants/latest | Seleccion de ultimo punto util, fallback a snapshot agregado, recalc KPI | State AUTOMATIC + payload UI | Si falla API, se conserva ultimo state valido |
-| B. Cambio a MANUAL | pre_state, catalogo base, snapshot live | live-first baseline, fallback jerarquico, neutralizacion hidrica, carry-over import/export | State MANUAL + diagnosticos | Si no hay live ni automatico usable, usar JSON base |
+| A. Sincronizacion automatica | production/latest, demand/latest, demand/hourly, plants/latest | Capa oficial MWh + capa operativa MW, seleccion de ultimo punto util, fallback jerarquico con ventana 24h, recalc KPI | State AUTOMATIC + payload UI con fuentes | Si falla API, se conserva ultimo state valido |
+| B. Cambio a MANUAL | pre_state, catalogo base, snapshot live | live-first baseline, fallback jerarquico, residual por tipo, neutralizacion hidrica, carry-over import/export | State MANUAL + diagnosticos | Si no hay live ni automatico usable, usar JSON base |
 | C. Edicion manual | demanda, catalogo editado, sequia, import/export | agregacion por tipo/planta, fisica hidro simplificada, recalc KPI inmediato | State nuevo + refresco visual | Fuera de MANUAL, no aplica cambios |
 
 ### Tabla de metodos criticos del simulador
 
 | Metodo critico | Entradas | Reglas principales | Salida |
 |---|---|---|---|
-| sync_from_microservice | production/latest, demand/hourly, plants/latest | Seleccion de ultimo punto efectivo, fallback a snapshot agregado, recalc KPI | State AUTOMATIC actualizado |
+| sync_from_microservice | production/latest, demand/latest, demand/hourly, plants/latest | Pobla capa oficial MWh, resuelve capa operativa MW, aplica fallback y fuente, recalc KPI | State AUTOMATIC actualizado |
 | switch_mode | modo objetivo | Cambia modo; si vuelve a AUTOMATIC dispara sync | State con modo actualizado |
 | apply_manual_central_catalog | catalogo centrales, sequia global, import/export opcionales | Agrega por tipo, aplica modelo hidro, preserva/copia interconexion, recalc KPI | State MANUAL recalculado |
 | apply_manual_interconnection | import_mw, export_mw | Actualiza intercambio neto, recalc KPI inmediato | State MANUAL con oferta neta ajustada |
 | build_manual_entry_catalog | pre_state, base_centrales, live_plants | Prioridad live-first, fallback agregado/JSON, diagnostico de causa | Catalogo baseline + fuente + diagnostico |
+| calculate_manual_residual_by_type | pre_state AUTOMATIC, catalogo baseline | Compara oferta por tipo del catalogo contra oferta operativa AUTOMATIC y calcula residual positivo | Residual por tipo + diagnostico de continuidad |
 
 ---
 
@@ -561,13 +574,10 @@ Efecto:
 
 Presenta:
 
-- Demanda.
-- Hidro, termica, renovable.
-- Import y export.
-- Oferta total.
-- Balance.
-- Reserva.
-- Riesgo.
+- Bloque operativo (MW): demanda, oferta por tecnologia, import/export, oferta total, balance, reserva y riesgo.
+- Bloque oficial CENACE (MWh): total, hidro, termica, renovable, import y export.
+- Metadatos: fuente de demanda, fuente de oferta y nota de ventana de equivalencia cuando aplica.
+- Residual no catalogado (MW): valor agregado usado en MANUAL cuando existe brecha entre catalogo y oferta observada en AUTOMATIC.
 
 ### 6.2 Mapa
 
@@ -591,6 +601,13 @@ Fuente de timeline:
 
 - AUTOMATIC: preferencia por curva horaria del microservicio.
 - MANUAL o fallback: historial de sesion generado en el cliente.
+
+Semantica de unidades en panel:
+
+- KPI de graficas se interpretan como operativos en MW.
+- Se muestra nota explicita de que el reporte oficial de CENACE corresponde a MWh.
+- Se muestra fuente de demanda/oferta y ventana de equivalencia cuando la oferta proviene de conversion MWh->MW.
+- Si existe residual no catalogado, este se interpreta como oferta operativa agregada, no asignada a una planta concreta del mapa.
 
 ---
 
@@ -774,6 +791,7 @@ Lectura operativa:
 
 - Health del servicio.
 - Produccion latest.
+- Demanda latest.
 - Curva horaria demand/hourly.
 - Plantas latest.
 
@@ -784,8 +802,9 @@ Estos endpoints son la interfaz de contrato principal con el simulador.
 | Endpoint | Proposito | Entrada | Campos de salida criticos | Uso en simulador | Fallback |
 |---|---|---|---|---|---|
 | GET /api/v1/health | Salud del servicio | Ninguna | status, last_scrape, success_rate | Verificacion pre-operacion | Si falla, trabajar en MANUAL con ultimo state |
-| GET /api/v1/production/latest | Snapshot agregado mas reciente | Ninguna | total_mwh, hydro_mwh, thermal_mwh, renewable_mwh, import_mwh, export_mwh, timestamp | Fallback de valores cuando curva horaria llega con ceros | Mantener ultimo state valido |
-| GET /api/v1/demand/hourly | Curva horaria de demanda y generacion | date opcional | demand_mw, hydro_mw, thermal_mw, renewable_mw, import_mw, export_mw | Fuente primaria de sync AUTOMATIC y timeline charts | Si no hay curva usable, usar production/latest |
+| GET /api/v1/production/latest | Snapshot oficial agregado mas reciente (MWh) | Ninguna | total_mwh, hydro_mwh, thermal_mwh, renewable_mwh, import_mwh, export_mwh, timestamp | Fuente de capa oficial en AUTOMATIC | Si no hay curva, convertir a MW equivalente (24h) |
+| GET /api/v1/demand/latest | Demanda nacional consolidada en tiempo real (MW) | Ninguna | demand_total_mw, demand_cnel_mw, demand_empresas_mw, timestamp | Fuente primaria de demanda operativa en AUTOMATIC | Si falla, usar demand/hourly o equivalencia desde production/latest |
+| GET /api/v1/demand/hourly | Curva horaria de demanda y generacion (MW) | date opcional | demand_mw, hydro_mw, thermal_mw, renewable_mw, import_mw, export_mw | Fuente primaria de oferta operativa y timeline charts | Si curva invalida, usar equivalencia desde production/latest |
 | GET /api/v1/plants/latest | Detalle por planta del ultimo timestamp | Ninguna | plant_id, plant_name, plant_type, mwh | Baseline MANUAL live-first y overlay por planta | Si falla, continuar con ultimo snapshot de plantas |
 | GET /api/v1/logs | Diagnostico de scraping | limit opcional | success, error_message, duration_seconds | Soporte de troubleshooting operativo | No bloquea simulacion |
 
@@ -795,19 +814,63 @@ Estos endpoints son la interfaz de contrato principal con el simulador.
 
 ### 8.1 Contrato semantico de campos clave
 
-- total_mwh en produccion latest: energia total reportada por fuente externa.
-- hydro_mw, thermal_mw, renewable_mw en curva horaria: potencia por bloque temporal.
-- import/export en curva y en snapshot: intercambio neto con sistemas vecinos.
+- Capa oficial (reporte): total_mwh, hydro_mwh, thermal_mwh, renewable_mwh, import_mwh, export_mwh en /production/latest.
+- Capa operativa (simulacion): demand_mw desde /demand/latest y oferta por tecnologia desde /demand/hourly.
+- En ausencia de curva util, se usa equivalencia MWh->MW con ventana de 24h para continuidad operativa.
+- import/export en curva son operativos (MW); en snapshot son reporte oficial (MWh).
+
+### 8.1.1 Regla de conversion de equivalencia
+
+Cuando se requiere continuidad operativa sin curva util:
+
+$$
+P_{eq}(MW) = \frac{E(MWh)}{Ventana(h)}
+$$
+
+Donde la ventana por defecto es 24h.
+
+Ejemplo:
+
+$$
+23714\ MWh \div 24\ h = 988.08\ MW
+$$
 
 ### 8.2 Politica de frescura y fallback
+
+En sincronizacion AUTOMATIC (demanda/oferta):
+
+1. Demanda operativa: /demand/latest.
+2. Si falla: ultimo punto util de /demand/hourly.
+3. Si tambien falla: equivalencia desde /production/latest con ventana de 24h.
+
+1. Oferta operativa: ultimo punto util de /demand/hourly.
+2. Si falla: equivalencia desde /production/latest con ventana de 24h.
 
 Al pasar de AUTOMATIC a MANUAL:
 
 1. Se intenta baseline desde snapshot de plantas en vivo si es util y fresco.
 2. Si no aplica, se usa estado agregado automatico.
 3. Si tampoco aplica, se usa JSON base de catalogo.
+4. En todos los casos, si el catalogo resultante no alcanza la oferta operativa AUTOMATIC, se aplica un residual no catalogado positivo por tipo.
 
 Esta jerarquia reduce saltos abruptos no deseados.
+
+### 8.2.1 Regla del residual no catalogado
+
+El residual solo se usa para continuidad de oferta al entrar a MANUAL. No reescribe la capacidad instalada del catalogo ni se asigna a una central real.
+
+Regla:
+
+$$
+Residual_{tipo} = max(0, OfertaAutomatic_{tipo} - OfertaCatalogo_{tipo})
+$$
+
+Propiedades operativas:
+
+- Nunca aumenta `installed_capacity_mw` de una central real.
+- Mantiene continuidad visual y numerica en KPI al cambiar de modo.
+- Representa produccion privada, no catalogada o diferencias entre fuentes CENACE.
+- Se muestra como agregado y no como marcador de mapa.
 
 ### 8.3 Continuidad import/export
 
@@ -916,6 +979,38 @@ Causa probable:
 Accion:
 
 - Ejecutar con API_RELOAD en falso para entorno estable.
+
+### Caso 5
+
+Sintoma:
+
+- Confusion entre magnitudes muy altas (MWh) y valores operativos (MW).
+
+Causa probable:
+
+- Lectura cruzada de capa oficial y capa operativa sin considerar unidades.
+
+Accion:
+
+- Verificar en KPI textual el bloque "Operativo (MW)" frente a "Resumen CENACE (MWh)".
+- Confirmar fuentes en estado: demand_source y supply_source.
+- Si hay conversion, revisar nota de ventana de equivalencia (eq 24h).
+
+### Caso 6
+
+Sintoma:
+
+- La oferta cae al pasar de AUTOMATIC a MANUAL.
+
+Causa probable:
+
+- El catalogo no cubre toda la oferta del estado AUTOMATIC o parte del detalle live no encuentra match contra el JSON.
+
+Accion:
+
+- Revisar diagnosticos de cambio de modo: `mapped_by_type_mw`, `unmatched_pool_by_type` y `residual_by_type_mw`.
+- Confirmar que se aplico residual no catalogado cuando existe gap positivo.
+- Si el residual es persistentemente alto, mejorar catalogo y matching en una iteracion aparte.
 
 ---
 

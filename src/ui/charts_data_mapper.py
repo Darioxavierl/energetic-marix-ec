@@ -70,7 +70,9 @@ def build_charts_payload(
                 {
                     "timestamp": str(item.get("hour", item.get("timestamp", ""))),
                     "demand_mw": float(item.get("demand_mw", 0.0) or 0.0),
-                    "supply_mw": float(item.get("total_mw", 0.0) or 0.0),
+                    "supply_mw": float(
+                        item.get("total_production_mw", item.get("total_mw", 0.0)) or 0.0
+                    ),
                     "hydro_mw": float(item.get("hydro_mw", 0.0) or 0.0),
                     "thermal_mw": float(item.get("thermal_mw", 0.0) or 0.0),
                     "renewable_mw": float(item.get("renewable_mw", 0.0) or 0.0),
@@ -88,8 +90,20 @@ def build_charts_payload(
         "demand_mw": float(state.demand_mw),
         "supply_mw": float(state.metrics.total_supply_mw),
         "balance_mw": float(state.metrics.balance_mw),
+        "demand_source": str(state.demand_source),
+        "supply_source": str(state.supply_source),
+        "operational_window_hours": float(state.operational_window_hours),
+        "units_note": "Operativo en MW; reporte oficial CENACE en MWh",
         "import_mw": float(state.import_mw),
         "export_mw": float(state.export_mw),
+        "official_summary": {
+            "total_mwh": float(state.official_total_mwh),
+            "hydro_mwh": float(state.official_hydro_mwh),
+            "thermal_mwh": float(state.official_thermal_mwh),
+            "renewable_mwh": float(state.official_renewable_mwh),
+            "import_mwh": float(state.official_import_mwh),
+            "export_mwh": float(state.official_export_mwh),
+        },
         "generation_by_type": {
             "HYDRO": float(state.hydro_mw),
             "THERMAL": float(state.thermal_mw),

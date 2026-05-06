@@ -9,12 +9,14 @@ from sqlalchemy.orm import Session
 from src.database.db_session import get_db
 from src.database.repositories import (
     ProductionRepository,
+    DemandRepository,
     PlantRepository,
     HourlyCurveRepository,
     ScrapeLogRepository
 )
 from src.api.schemas import (
     ProductionResponse,
+    DemandLatestResponse,
     PlantGenerationResponse,
     HourlyCurveResponse,
     HealthResponse,
@@ -77,6 +79,23 @@ async def get_production_history(
         )
         for s in snapshots
     ]
+
+
+@router.get("/demand/latest", response_model=DemandLatestResponse)
+async def get_latest_demand(db: Session = Depends(get_db)):
+    """Obtiene la demanda nacional más reciente del tab de demanda en tiempo real."""
+
+    repo = DemandRepository(db)
+    snapshot = repo.get_latest()
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="No demand data available")
+
+    return DemandLatestResponse(
+        timestamp=snapshot.timestamp,
+        demand_total_mw=snapshot.demand_total_mw,
+        demand_cnel_mw=snapshot.demand_cnel_mw,
+        demand_empresas_mw=snapshot.demand_empresas_mw,
+    )
 
 
 # ====== PLANT ENDPOINTS ======
@@ -180,14 +199,14 @@ async def get_hourly_demand(
 async def get_health(db: Session = Depends(get_db)):
     """Estado de salud del servicio con conteo real"""
     try:
-        from src.database.models import ProductionSnapshot
+        from src.database.models import ProductionSnapshot, DemandSnapshot
         
         scrape_repo = ScrapeLogRepository(db)
         success_rate = scrape_repo.get_success_rate(days=7)
         last_logs = scrape_repo.get_last_n_logs(1)
         
         # Conteo real de datos
-        total_records = db.query(ProductionSnapshot).count()
+        total_records = db.query(ProductionSnapshot).count() + db.query(DemandSnapshot).count()
         
         last_scrape = last_logs[0].timestamp if last_logs else None
         next_scrape = (

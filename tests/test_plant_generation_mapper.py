@@ -18,8 +18,8 @@ def test_map_live_generation_prefers_name_match():
 
     mapped = map_live_generation_to_centrales(centrales, live_plants)
 
-    assert mapped["coca_codo_1"] == 1000
-    assert mapped["mazar_1"] == 300
+    assert round(mapped["coca_codo_1"], 2) == round(1000.0 / 24.0, 2)
+    assert round(mapped["mazar_1"], 2) == round(300.0 / 24.0, 2)
 
 
 def test_map_live_generation_distributes_unmatched_pool_by_capacity():
@@ -33,8 +33,9 @@ def test_map_live_generation_distributes_unmatched_pool_by_capacity():
 
     mapped = map_live_generation_to_centrales(centrales, live_plants)
 
-    assert round(mapped["thermal_a"], 1) == 100.0
-    assert round(mapped["thermal_b"], 1) == 300.0
+    # 400 MWh / 24h -> 16.67 MW; capacity shares are 25% and 75%.
+    assert round(mapped["thermal_a"], 2) == round((400.0 / 24.0) * 0.25, 2)
+    assert round(mapped["thermal_b"], 2) == round((400.0 / 24.0) * 0.75, 2)
 
 
 def test_calculate_plant_utilization_clamps_to_one():
@@ -59,5 +60,6 @@ def test_map_live_generation_distributes_generic_renewable_to_wind_and_solar():
 
     mapped = map_live_generation_to_centrales(centrales, live_plants)
 
-    assert round(mapped["w1"], 1) == 100.0
-    assert round(mapped["s1"], 1) == 300.0
+    # 400 MWh / 24h -> 16.67 MW; wind/solar capacity share is 25%/75%.
+    assert round(mapped["w1"], 2) == round((400.0 / 24.0) * 0.25, 2)
+    assert round(mapped["s1"], 2) == round((400.0 / 24.0) * 0.75, 2)

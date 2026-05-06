@@ -42,6 +42,9 @@ class CENACEScraper:
             cleaned_data = self.cleaner.clean_production_data(raw_data)
 
             if cleaned_data:
+                # 1.1 Integrar demanda total del tab interactivo de demanda
+                cleaned_data["demand_summary"] = self.parser.parse_demand_summary(html) or {}
+
                 # 2. Integrar detalle por planta
                 cleaned_data["plants"] = self.parser.parse_plant_details(html)
 
@@ -59,8 +62,7 @@ class CENACEScraper:
             html = await self._fetch_page()
             if not html:
                 return None
-            self.logger.debug("scrape_demand_data: No implementado aún")
-            return None
+            return self.parser.parse_demand_summary(html)
         except Exception as e:
             self.logger.error(f"Error en scrape_demand_data: {e}")
             return None

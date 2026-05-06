@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc, and_
 from src.database.models import (
     ProductionSnapshot,
+    DemandSnapshot,
     PlantGeneration,
     HourlyCurve,
     ScrapeLog
@@ -91,6 +92,27 @@ class PlantRepository:
                 PlantGeneration.plant_type == plant_type
             )
         ).all()
+
+
+class DemandRepository:
+    """Acceso a DemandSnapshot."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def create(self, data: dict) -> DemandSnapshot:
+        """Crea nueva captura de demanda."""
+        snapshot = DemandSnapshot(**data)
+        self.db.add(snapshot)
+        self.db.commit()
+        logger.info(f"DemandSnapshot creado: {snapshot.timestamp}")
+        return snapshot
+
+    def get_latest(self) -> Optional[DemandSnapshot]:
+        """Obtiene el snapshot más reciente de demanda."""
+        return self.db.query(DemandSnapshot).order_by(
+            desc(DemandSnapshot.timestamp)
+        ).first()
 
 
 class HourlyCurveRepository:

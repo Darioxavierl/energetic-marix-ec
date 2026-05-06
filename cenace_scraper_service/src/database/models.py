@@ -106,6 +106,26 @@ class HourlyCurve(Base):
         )
 
 
+class DemandSnapshot(Base):
+    """Captura puntual de demanda nacional en tiempo real."""
+
+    __tablename__ = "demand_snapshots"
+
+    id = Column(Integer, primary_key=True)
+    timestamp = Column(DateTime, unique=True, nullable=False, index=True)
+
+    # Demanda (MW)
+    demand_total_mw = Column(Float, nullable=False)
+    demand_cnel_mw = Column(Float, default=0)
+    demand_empresas_mw = Column(Float, default=0)
+
+    # Auditoría
+    created_at = Column(DateTime, default=datetime.now)
+
+    def __repr__(self):
+        return f"<DemandSnapshot(timestamp={self.timestamp}, total={self.demand_total_mw:.0f}MW)>"
+
+
 class ScrapeLog(Base):
     """Log de ejecuciones del scraper"""
     __tablename__ = "scrape_logs"

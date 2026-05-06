@@ -57,7 +57,7 @@ def test_build_payload_uses_hourly_curve_in_automatic_mode():
         {
             "hour": "10:00",
             "demand_mw": 2800.0,
-            "total_mw": 2900.0,
+            "total_production_mw": 2900.0,
             "hydro_mw": 1700.0,
             "thermal_mw": 800.0,
             "renewable_mw": 400.0,
@@ -68,6 +68,9 @@ def test_build_payload_uses_hourly_curve_in_automatic_mode():
     assert payload["timeline_source"] == "hourly_curve"
     assert payload["timeline"][0]["timestamp"] == "10:00"
     assert payload["timeline"][0]["supply_mw"] == 2900.0
+    assert payload["demand_source"] == "unknown"
+    assert payload["supply_source"] == "unknown"
+    assert payload["official_summary"]["total_mwh"] == 0.0
 
 
 def test_build_payload_uses_session_history_in_manual_mode():
@@ -96,3 +99,4 @@ def test_build_payload_uses_session_history_in_manual_mode():
     assert payload["timeline"][0]["timestamp"] == "t1"
     assert payload["generation_by_type"]["HYDRO"] == 1500.0
     assert payload["recent_events"][0]["event"] == "manual_adjust"
+    assert "units_note" in payload

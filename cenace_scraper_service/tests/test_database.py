@@ -8,7 +8,13 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from src.database.models import Base, ProductionSnapshot, PlantGeneration, HourlyCurve, ScrapeLog
-from src.database.repositories import ProductionRepository, PlantRepository, HourlyCurveRepository, ScrapeLogRepository
+from src.database.repositories import (
+    ProductionRepository,
+    DemandRepository,
+    PlantRepository,
+    HourlyCurveRepository,
+    ScrapeLogRepository,
+)
 
 
 @pytest.fixture
@@ -122,6 +128,34 @@ class TestPlantRepository:
         
         count = repo.create_batch(data_list)
         assert count == 2
+
+
+class TestDemandRepository:
+    """Tests para DemandRepository"""
+
+    def test_create_and_get_latest(self, db):
+        repo = DemandRepository(db)
+
+        repo.create(
+            {
+                "timestamp": datetime.now(),
+                "demand_total_mw": 4200.0,
+                "demand_cnel_mw": 2900.0,
+                "demand_empresas_mw": 1300.0,
+            }
+        )
+        repo.create(
+            {
+                "timestamp": datetime.now() + timedelta(minutes=1),
+                "demand_total_mw": 4250.0,
+                "demand_cnel_mw": 2920.0,
+                "demand_empresas_mw": 1330.0,
+            }
+        )
+
+        latest = repo.get_latest()
+        assert latest is not None
+        assert latest.demand_total_mw == 4250.0
 
 
 class TestHourlyCurveRepository:

@@ -26,6 +26,7 @@ from PyQt6.QtCore import Qt, QTimer
 from src.application.scenario_manager import ScenarioManager
 from src.application.simulation_controller import SimulationController
 from src.application.manual_catalog_baseline import (
+    calculate_manual_residual_by_type,
     build_manual_catalog_from_automatic_state_with_diagnostics,
     build_manual_catalog_from_live_with_diagnostics,
     has_usable_live_snapshot,
@@ -381,16 +382,27 @@ class MainWindow(QMainWindow):
         baseline_diagnostics: dict = {}
         if new_mode == DataSourceMode.MANUAL and self.centrales:
             self.centrales, baseline_source, baseline_diagnostics = self._build_manual_entry_catalog(pre_state)
+            self.global_drought_pct = GLOBAL_DROUGHT_DEFAULT
             if MANUAL_ENTRY_HYDRO_NEUTRALIZE_ON_SWITCH:
                 neutralization = neutralize_hydro_reservoir_for_entry(
                     self.centrales,
                     target_reservoir_pct=MANUAL_ENTRY_HYDRO_NEUTRAL_RESERVOIR_PCT,
                 )
                 baseline_diagnostics = {**baseline_diagnostics, **neutralization}
+            residual_diagnostics = calculate_manual_residual_by_type(
+                pre_state,
+                self.centrales,
+                global_drought_factor=(self.global_drought_pct / 100.0),
+            )
+            baseline_diagnostics = {**baseline_diagnostics, **residual_diagnostics}
             self.central_lookup = {str(c.get("id")): c for c in self.centrales}
             self._rebuild_installed_by_type()
             self._refresh_central_selector()
-            self.global_drought_pct = GLOBAL_DROUGHT_DEFAULT
+            self.simulation_controller.set_manual_residual_by_type(
+                residual_diagnostics.get("residual_by_type_mw", {}),
+                baseline_source=baseline_source,
+                residual_reason="catalog_gap_or_non_catalogued_generation",
+            )
             state = self.simulation_controller.apply_manual_central_catalog(
                 self.centrales,
                 global_drought_factor=(self.global_drought_pct / 100.0),
@@ -521,6 +533,7 @@ class MainWindow(QMainWindow):
         self._rebuild_installed_by_type()
         self._refresh_central_selector()
         self.global_drought_pct = GLOBAL_DROUGHT_DEFAULT
+        self.simulation_controller.set_manual_residual_by_type({}, baseline_source="manual_reset", residual_reason="")
         state = self.simulation_controller.apply_manual_central_catalog(
             self.centrales,
             global_drought_factor=(self.global_drought_pct / 100.0),
@@ -539,7 +552,11 @@ class MainWindow(QMainWindow):
         state = payload.get("state", self.simulation_controller.state)
         origin = str(payload.get("origin", "state_updated"))
         source_ts = state.source_timestamp.isoformat(sep=" ", timespec="seconds") if state.source_timestamp else "N/A"
-        self.status_label.setText(f"Estado: Datos activos. Fuente: {source_ts}")
+        self.status_label.setText(
+            "Estado: Datos activos. "
+            f"Fuente oficial: {source_ts} | "
+            f"Oferta: {state.supply_source} | Demanda: {state.demand_source}"
+        )
         append_history_point(
             self.chart_history,
             build_history_point_with_origin(state, origin),
@@ -866,8 +883,18 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _format_metrics(state: SimulationState) -> str:
         """Return KPI summary text."""
+        window_note = ""
+        if state.operational_window_hours > 1.0:
+            window_note = f" (eq {state.operational_window_hours:.0f}h)"
+        residual_total = (
+            float(state.residual_hydro_mw)
+            + float(state.residual_thermal_mw)
+            + float(state.residual_renewable_mw)
+        )
+
         return (
             "KPI sistema\n"
+            "Operativo (MW)\n"
             f"Demanda MW:         {state.demand_mw:10.2f}\n"
             f"Hidro MW:           {state.hydro_mw:10.2f}\n"
             f"Termica MW:         {state.thermal_mw:10.2f}\n"
@@ -878,6 +905,21 @@ class MainWindow(QMainWindow):
             f"Oferta total MW:    {state.metrics.total_supply_mw:10.2f}\n"
             f"Balance MW:         {state.metrics.balance_mw:10.2f}\n"
             f"Reserva %:          {state.metrics.reserve_margin_pct:10.2f}\n"
-            f"Riesgo:             {state.metrics.risk_level}"
+            f"Riesgo:             {state.metrics.risk_level}\n"
+            f"Residual MW:        {residual_total:10.2f}\n"
+            f"Residual H/T/R MW:  {state.residual_hydro_mw:6.2f} / {state.residual_thermal_mw:6.2f} / {state.residual_renewable_mw:6.2f}\n"
+            "--------------------------------\n"
+            "Resumen CENACE (MWh)\n"
+            f"Total MWh:          {state.official_total_mwh:10.2f}\n"
+            f"Hidro MWh:          {state.official_hydro_mwh:10.2f}\n"
+            f"Termica MWh:        {state.official_thermal_mwh:10.2f}\n"
+            f"Renovable MWh:      {state.official_renewable_mwh:10.2f}\n"
+            f"Import MWh:         {state.official_import_mwh:10.2f}\n"
+            f"Export MWh:         {state.official_export_mwh:10.2f}\n"
+            "--------------------------------\n"
+            f"Baseline MANUAL:    {state.manual_baseline_source or '-'}\n"
+            f"Fuente demanda:     {state.demand_source}\n"
+            f"Fuente oferta:      {state.supply_source}{window_note}\n"
+            f"Residual motivo:    {state.manual_residual_reason or '-'}"
         )
 
